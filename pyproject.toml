@@ -1,0 +1,69 @@
+[project]
+name = "ai-system-docai"
+version = "5I.2025"
+description = "Offline AI-assisted document reasoning system with PyQt6 GUI"
+authors = [
+    {name = "AI-System-Solutions"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.8"
+keywords = ["AI", "RAG", "document", "search", "semantic", "PyQt6", "offline"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Office/Business",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "PyQt6>=6.6.0",
+    "faiss-cpu>=1.7.4",
+    "sentence-transformers>=2.2.2",
+    "rank-bm25>=0.2.2",
+    "numpy>=1.24.0",
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "pypdf>=3.15.0",
+    "pymupdf>=1.22.5",
+    "docx2txt>=0.8",
+    "python-pptx>=0.6.21",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+    "chardet>=5.1.0",
+    "toml>=0.10.2",
+    "psutil>=5.9.5",
+    "requests>=2.31.0",
+    "openai>=1.0.0",
+]
+
+[project.optional-dependencies]
+llm = [
+    "anthropic>=0.18.0",
+    "google-generativeai>=0.3.0",
+    "llama-cpp-python>=0.2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/ai-system-solutions/docai-v5i"
+Repository = "https://github.com/ai-system-solutions/docai-v5i"
+Documentation = "https://github.com/ai-system-solutions/docai-v5i/docs"
+
+[build-system]
+requires = ["setuptools>=45", "wheel", "setuptools_scm>=6.2"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.toml", "*.json", "*.txt"]
+
