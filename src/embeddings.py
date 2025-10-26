@@ -18,11 +18,83 @@ logger = logging.getLogger(__name__)
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
+def download_model(model_name: str = None) -> bool:
+    """
+    Download and cache embedding model for offline use
+
+    Args:
+        model_name: Name of the model to download (uses config default if None)
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if model_name is None:
+        model_name = config_manager.config.embeddings.model
+
+    print(f"Downloading embedding model: {model_name}")
+    print("This may take several minutes depending on your internet connection...")
+
+    try:
+        success = ensure_model_available(model_name)
+        if success:
+            print(f"✅ Model {model_name} downloaded successfully!")
+            print(f"📁 Cached in: {config_manager.get_cache_path() / 'transformers'}")
+            return True
+        else:
+            print(f"❌ Failed to download model {model_name}")
+            return False
+    except Exception as e:
+        print(f"❌ Error downloading model: {e}")
+        return False
+
 def get_cache_dir() -> Path:
     """Get the cache directory for transformers models"""
     cache_dir = config_manager.get_cache_path() / "transformers"
     cache_dir.mkdir(parents=True, exist_ok=True)
     return cache_dir
+
+def ensure_model_available(model_name: str) -> bool:
+    """
+    Ensure the embedding model is available locally (pre-download if needed)
+
+    Args:
+        model_name: Name of the sentence-transformers model
+
+    Returns:
+        True if model is available, False otherwise
+    """
+    cache_dir = get_cache_dir()
+
+    # Set environment variables for sentence-transformers
+    os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)
+    os.environ["HF_HOME"] = str(cache_dir)
+    os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"
+    os.environ["HF_HUB_ETAG_TIMEOUT"] = "30"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
+    os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(cache_dir)
+
+    # Check if model files already exist (try both cache structures)
+    model_cache_path1 = cache_dir / "models" / model_name.replace("/", "--")
+    model_cache_path2 = cache_dir / model_name.replace("/", "--")
+
+    if model_cache_path1.exists() or model_cache_path2.exists():
+        logger.info(f"Model {model_name} already cached")
+        return True
+
+    logger.info(f"Pre-downloading embedding model: {model_name}")
+    try:
+        # Try to load the model (this will trigger download if needed)
+        model = SentenceTransformer(
+            model_name,
+            device="cpu",
+            cache_folder=str(cache_dir),
+            trust_remote_code=False
+        )
+        logger.info(f"Model {model_name} downloaded and cached successfully")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to pre-download model {model_name}: {e}")
+        return False
 
 def load_embedding_model(model_name: str) -> SentenceTransformer:
     """
@@ -36,28 +108,67 @@ def load_embedding_model(model_name: str) -> SentenceTransformer:
     """
     cache_dir = get_cache_dir()
     
-    # Set environment variable for transformers cache
+    # Set environment variables for transformers cache and better timeout handling
     os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)
     os.environ["HF_HOME"] = str(cache_dir)
-    
-    try:
-        logger.info(f"Loading embedding model: {model_name} (CPU-only)")
-        
-        # Force CPU device
-        model = SentenceTransformer(
-            model_name,
-            device="cpu",
-            cache_folder=str(cache_dir)
-        )
-        
-        logger.info(f"Successfully loaded {model_name} on CPU")
-        logger.info(f"Model dimension: {model.get_sentence_embedding_dimension()}")
-        
-        return model
-        
-    except Exception as e:
-        logger.error(f"Failed to load embedding model {model_name}: {e}")
-        raise
+    os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(cache_dir)
+    os.environ["HF_HUB_DOWNLOAD_TIMEOUT"] = "60"  # 60 second timeout
+    os.environ["HF_HUB_ETAG_TIMEOUT"] = "30"
+    os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"  # Disable telemetry
+    # Try to force offline mode if model exists locally
+    os.environ["HF_HUB_OFFLINE"] = "1"
+
+    # Try to find the local model path first
+    local_model_path = cache_dir / "models--sentence-transformers--all-MiniLM-L6-v2" / "snapshots"
+    if local_model_path.exists():
+        # Find the actual model directory
+        model_dirs = list(local_model_path.glob("*"))
+        if model_dirs:
+            actual_model_path = model_dirs[0]
+            logger.info(f"Found local model at: {actual_model_path}")
+            try:
+                model = SentenceTransformer(
+                    str(actual_model_path),
+                    device="cpu",
+                    trust_remote_code=False
+                )
+                logger.info(f"Successfully loaded {model_name} from local cache")
+                logger.info(f"Model dimension: {model.get_sentence_embedding_dimension()}")
+                return model
+            except Exception as e:
+                logger.warning(f"Failed to load from local path, trying online method: {e}")
+
+    max_retries = 3
+    retry_delay = 2
+
+    for attempt in range(max_retries):
+        try:
+            logger.info(f"Loading embedding model: {model_name} (CPU-only) - Attempt {attempt + 1}/{max_retries}")
+
+            # Force CPU device with additional parameters for reliability
+            model = SentenceTransformer(
+                model_name,
+                device="cpu",
+                cache_folder=str(cache_dir),
+                trust_remote_code=False  # Security: don't trust remote code
+            )
+
+            logger.info(f"Successfully loaded {model_name} on CPU")
+            logger.info(f"Model dimension: {model.get_sentence_embedding_dimension()}")
+
+            return model
+
+        except Exception as e:
+            logger.warning(f"Failed to load embedding model {model_name} (attempt {attempt + 1}/{max_retries}): {e}")
+
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying in {retry_delay} seconds...")
+                import time
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+            else:
+                logger.error(f"All attempts failed to load embedding model {model_name}")
+                raise
 
 class EmbeddingManager:
     """Manages embeddings generation with CPU-only operation"""

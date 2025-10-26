@@ -52,20 +52,29 @@ class StreamingDisplayWidget(QWidget):
         left_panel.setFrameStyle(QFrame.Shape.StyledPanel)
         left_panel_layout = QVBoxLayout(left_panel)
         
-        answer_label = QLabel("Answer")
-        answer_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        answer_label = QLabel("📝 Answer")
+        answer_label.setStyleSheet("""
+            font-weight: 600;
+            font-size: 16px;
+            color: #24292e;
+            padding: 8px 0px;
+            font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
+        """)
         left_panel_layout.addWidget(answer_label)
         
         self.answer_display = QTextEdit()
         self.answer_display.setReadOnly(True)
-        self.answer_display.setMaximumHeight(150)
+        self.answer_display.setMinimumHeight(300)
         self.answer_display.setStyleSheet("""
             QTextEdit {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 5px;
-                padding: 10px;
-                font-family: 'Segoe UI', Arial, sans-serif;
+                background-color: #ffffff;
+                border: 1px solid #e1e4e8;
+                border-radius: 8px;
+                padding: 16px;
+                font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
+                font-size: 15px;
+                line-height: 1.6;
+                color: #24292e;
             }
         """)
         left_panel_layout.addWidget(self.answer_display)
@@ -77,20 +86,28 @@ class StreamingDisplayWidget(QWidget):
         right_panel.setFrameStyle(QFrame.Shape.StyledPanel)
         right_panel_layout = QVBoxLayout(right_panel)
         
-        reasoning_label = QLabel("Thinking Process")
-        reasoning_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        reasoning_label = QLabel("🧠 Thinking Process")
+        reasoning_label.setStyleSheet("""
+            font-weight: 600;
+            font-size: 16px;
+            color: #24292e;
+            padding: 8px 0px;
+            font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
+        """)
         right_panel_layout.addWidget(reasoning_label)
         
         self.reasoning_display = QTextEdit()
         self.reasoning_display.setReadOnly(True)
         self.reasoning_display.setStyleSheet("""
             QTextEdit {
-                background-color: #f8f9fa;
-                border: 1px solid #dee2e6;
-                border-radius: 5px;
-                padding: 10px;
-                font-family: 'Consolas', 'Monaco', monospace;
-                font-size: 12px;
+                background-color: #f6f8fa;
+                border: 1px solid #e1e4e8;
+                border-radius: 8px;
+                padding: 16px;
+                font-family: 'SF Mono', 'Consolas', 'Monaco', 'Courier New', monospace;
+                font-size: 13px;
+                line-height: 1.5;
+                color: #586069;
             }
         """)
         right_panel_layout.addWidget(self.reasoning_display)
@@ -237,12 +254,52 @@ class StreamingChatWidget(QWidget):
         
         from PyQt6.QtWidgets import QLineEdit, QPushButton
         self.query_input = QLineEdit()
-        self.query_input.setPlaceholderText("Ask a question about your documents...")
-        self.query_input.returnPressed.connect(self.ask_question)
+        self.query_input.setPlaceholderText("Ask a question about your documents... (Press Enter to send)")
+        self.query_input.returnPressed.connect(self.ask_question)  # Enter key sends message
+        self.query_input.setMinimumHeight(48)
+        self.query_input.setStyleSheet("""
+            QLineEdit {
+                background-color: #ffffff;
+                border: 2px solid #e1e4e8;
+                border-radius: 24px;
+                padding: 12px 20px;
+                font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
+                font-size: 15px;
+                color: #24292e;
+            }
+            QLineEdit:focus {
+                border: 2px solid #0078d4;
+                background-color: #ffffff;
+            }
+        """)
         input_layout.addWidget(self.query_input)
         
-        self.ask_button = QPushButton("Ask")
+        self.ask_button = QPushButton("Send")
+        self.ask_button.setMinimumHeight(48)
+        self.ask_button.setMinimumWidth(100)
         self.ask_button.clicked.connect(self.ask_question)
+        self.ask_button.setStyleSheet("""
+            QPushButton {
+                background-color: #0078d4;
+                color: white;
+                border: none;
+                border-radius: 24px;
+                padding: 12px 24px;
+                font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
+                font-size: 15px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #106ebe;
+            }
+            QPushButton:pressed {
+                background-color: #005a9e;
+            }
+            QPushButton:disabled {
+                background-color: #cccccc;
+                color: #666666;
+            }
+        """)
         input_layout.addWidget(self.ask_button)
         
         layout.addLayout(input_layout)
@@ -254,8 +311,27 @@ class StreamingChatWidget(QWidget):
         # Control buttons
         control_layout = QHBoxLayout()
         
-        self.clear_button = QPushButton("Clear")
+        self.clear_button = QPushButton("🗑️ Clear")
         self.clear_button.clicked.connect(self.clear_display)
+        self.clear_button.setStyleSheet("""
+            QPushButton {
+                background-color: #f6f8fa;
+                color: #24292e;
+                border: 1px solid #e1e4e8;
+                border-radius: 6px;
+                padding: 8px 16px;
+                font-family: 'Segoe UI', 'San Francisco', 'Helvetica Neue', Arial, sans-serif;
+                font-size: 14px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #f3f4f6;
+                border: 1px solid #d1d5da;
+            }
+            QPushButton:pressed {
+                background-color: #edeff2;
+            }
+        """)
         control_layout.addWidget(self.clear_button)
         
         control_layout.addStretch()

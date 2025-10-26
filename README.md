@@ -69,19 +69,29 @@ First run will automatically:
 
 ## 🎯 Usage
 
-### 1. Index Documents
+### 1. Pre-Download Model (Recommended)
+```bash
+# Windows
+download_model.bat
+
+# Linux/macOS
+./download_model.sh
+```
+This downloads the embedding model locally to avoid network issues during indexing.
+
+### 2. Index Documents
 1. Go to **Indexing** tab
 2. Select folder with documents
 3. Click **Build Index**
 4. Wait for completion
 
-### 2. Configure LLM
+### 3. Configure LLM
 1. Go to **Chat** tab
 2. Select LLM backend
 3. Click **Configure** (set API key if needed)
 4. Click **Apply**
 
-### 3. Ask Questions
+### 4. Ask Questions
 1. Type your question
 2. Enable **Live Thinking** for streaming (optional)
 3. Click **Search and Answer**
@@ -128,8 +138,25 @@ pip install -r requirements.txt
 
 ### Performance Issues
 1. Use MiniLM-L6-v2 embedding model (faster)
-2. Use HNSW index type
+2. Use Flat index type (more reliable on limited memory)
 3. Reduce chunk size in config
+4. Pre-download models using `download_model.bat` (Windows) or `./download_model.sh` (Linux)
+
+### Network/Model Download Issues
+```bash
+# Pre-download embedding model to avoid network issues during indexing
+# Windows
+download_model.bat
+
+# Linux/macOS
+./download_model.sh
+```
+
+### Memory Issues
+- System requires 16GB RAM minimum (8GB may work for small documents)
+- Reduced default batch_size from 8 to 4
+- Reduced chunk_size from 800 to 512 for better memory efficiency
+- Use Flat index instead of HNSW for reliability
 
 ## 📦 Project Structure
 

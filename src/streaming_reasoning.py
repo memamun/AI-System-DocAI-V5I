@@ -153,6 +153,7 @@ class StreamingReasoningEngine:
             "Your response will be streamed in real-time, so structure it clearly with step headers."
         )
         
+        # Use FULL context like the old project (no truncation)
         context_text = "\n\n".join([
             f"--- Document: {item.get('file', 'Unknown')} (Page: {item.get('page', 'N/A')}) --- \n{item.get('text', '')}"
             for item in context
@@ -179,13 +180,14 @@ STEP 4 - SYNTHESIS:
 Putting this all together, the answer is...
 
 FINAL ANSWER:
-[Provide your complete, well-reasoned answer here]
+[Provide your complete, well-reasoned answer here. This should be a complete, standalone response that directly addresses what was asked. Include all relevant details, steps, and procedures from the context.]
 
 IMPORTANT: 
 - Use [1], [2], [3] to cite specific document snippets
 - Show your reasoning process step by step
 - Be conversational and explain your thinking
-- Reference the document sources in your reasoning"""
+- Reference the document sources in your reasoning
+- Your FINAL ANSWER must be complete and comprehensive, someone should understand it without seeing the reasoning above"""
         
         return system_prompt, user_prompt
     
@@ -205,7 +207,7 @@ IMPORTANT:
         return current_step
     
     def _extract_partial_answer(self, response: str) -> str:
-        """Extract partial answer as it's being generated with progressive building"""
+        """Extract partial answer as it's being generated with progressive building - preserves detailed procedures"""
         lines = response.split('\n')
         
         # Look for FINAL ANSWER section first
@@ -213,23 +215,30 @@ IMPORTANT:
         answer_lines = []
         
         for line in lines:
-            line = line.strip()
-            if "FINAL ANSWER:" in line.upper():
+            stripped_line = line.strip()
+            if "FINAL ANSWER:" in stripped_line.upper():
                 final_answer_started = True
                 # Extract the answer part after "FINAL ANSWER:"
-                answer_part = line.split(":", 1)
-                if len(answer_part) > 1:
+                answer_part = stripped_line.split(":", 1)
+                if len(answer_part) > 1 and answer_part[1].strip():
                     answer_lines.append(answer_part[1].strip())
                 continue
             
-            if final_answer_started and line:
-                answer_lines.append(line)
+            # Collect ALL lines in FINAL ANSWER section including numbered steps
+            if final_answer_started:
+                # Stop only if we hit another major section
+                if any(marker in stripped_line.upper() for marker in ['ALTERNATIVE INTERPRETATION', 'CONFIDENCE SCORE', '---END---']):
+                    break
+                if stripped_line:  # Only add non-empty lines
+                    answer_lines.append(line.rstrip())
+                elif answer_lines:  # Preserve spacing between paragraphs
+                    answer_lines.append("")
         
-        # If we found FINAL ANSWER section, format it properly
+        # If we found FINAL ANSWER section, return it with minimal formatting
         if answer_lines:
             # Join lines while preserving structure
             answer_text = '\n'.join(answer_lines).strip()
-            return self._format_answer_structure(answer_text)
+            return answer_text if answer_text else ""
         
         # If no FINAL ANSWER yet, build progressive answer from content
         content_lines = []
@@ -263,28 +272,78 @@ IMPORTANT:
         return ""
     
     def _extract_final_answer(self, response: str) -> str:
-        """Extract the final answer from complete response"""
+        """Extract the final answer from complete response - uses synthesis step if FINAL ANSWER is incomplete"""
         lines = response.split('\n')
         
-        # Look for FINAL ANSWER section
+        # Look for FINAL ANSWER section first
         final_answer_started = False
         answer_lines = []
         
         for line in lines:
-            line = line.strip()
-            if "FINAL ANSWER:" in line.upper():
+            stripped_line = line.strip()
+            if "FINAL ANSWER:" in stripped_line.upper():
                 final_answer_started = True
                 # Extract the answer part after "FINAL ANSWER:"
-                answer_part = line.split(":", 1)
-                if len(answer_part) > 1:
+                answer_part = stripped_line.split(":", 1)
+                if len(answer_part) > 1 and answer_part[1].strip():
                     answer_lines.append(answer_part[1].strip())
                 continue
             
-            if final_answer_started and line:
-                answer_lines.append(line)
+            # Collect ALL lines in FINAL ANSWER section
+            if final_answer_started:
+                # Stop only if we hit another major section
+                if any(marker in stripped_line.upper() for marker in ['ALTERNATIVE INTERPRETATION', 'CONFIDENCE SCORE', '---END---']):
+                    break
+                if stripped_line:
+                    answer_lines.append(line.rstrip())
+                elif answer_lines:  # Preserve spacing
+                    answer_lines.append("")
         
-        if answer_lines:
-            return ' '.join(answer_lines).strip()
+        # Check if we found a substantial FINAL ANSWER
+        final_answer_text = '\n'.join(answer_lines).strip() if answer_lines else ""
+        
+        # If FINAL ANSWER is too short or just a summary, look for detailed answer in SYNTHESIS step
+        if len(final_answer_text) < 200 or (final_answer_text and not any(c.isdigit() and '. ' in final_answer_text for c in final_answer_text)):
+            # Look for STEP 4 - SYNTHESIS which often has the detailed procedure
+            synthesis_started = False
+            synthesis_lines = []
+            
+            for line in lines:
+                stripped_line = line.strip()
+                
+                # Check for STEP 4 - SYNTHESIS
+                if re.match(r'STEP\s*4.*SYNTHESIS', stripped_line.upper()):
+                    synthesis_started = True
+                    continue
+                
+                # Stop at FINAL ANSWER or next major section
+                if synthesis_started and any(marker in stripped_line.upper() for marker in ['FINAL ANSWER:', 'STEP 5', 'ALTERNATIVE', '---END---']):
+                    break
+                
+                # Collect synthesis content
+                if synthesis_started and stripped_line:
+                    # Look for the detailed answer that starts with "Putting this all together" or similar
+                    if any(phrase in stripped_line.lower() for phrase in ['putting this all together', 'the answer is as follows', 'to resolve', 'you can try the following']):
+                        # Found the detailed answer in synthesis - collect all from here
+                        synthesis_lines.append(stripped_line)
+                        # Collect rest of synthesis
+                        idx = lines.index(line)
+                        for remaining_line in lines[idx+1:]:
+                            remaining_stripped = remaining_line.strip()
+                            if any(marker in remaining_stripped.upper() for marker in ['FINAL ANSWER:', 'STEP 5', 'ALTERNATIVE', '---END---']):
+                                break
+                            if remaining_stripped:
+                                synthesis_lines.append(remaining_stripped)
+                        break
+            
+            # If we found a detailed synthesis, use it
+            synthesis_text = ' '.join(synthesis_lines).strip() if synthesis_lines else ""
+            if synthesis_text and len(synthesis_text) > len(final_answer_text):
+                return synthesis_text
+        
+        # Return FINAL ANSWER if we have it
+        if final_answer_text:
+            return final_answer_text
         
         # Fallback: use the last substantial sentence
         for line in reversed(lines):
@@ -514,14 +573,14 @@ IMPORTANT:
             # Start with the main answer
             answer_parts = []
             
-            # Add the main answer if available
+            # Add the main answer if available - ALWAYS enhance like the old project
             if result.answer and result.answer.strip():
                 # Clean up the answer (remove any existing citations)
                 clean_answer = result.answer.strip()
                 if "Sources:" in clean_answer:
                     clean_answer = clean_answer.split("Sources:")[0].strip()
                 
-                # Enhance the answer with more detail and depth
+                # ALWAYS enhance the answer with more detail and depth (like old project)
                 enhanced_answer = self._enhance_answer_with_context(clean_answer, result)
                 answer_parts.append(enhanced_answer)
             
@@ -571,20 +630,23 @@ IMPORTANT:
             # Start with the formatted answer
             enhanced_parts = [formatted_answer]
             
-            # Add depth based on available information
-            if has_high_confidence and has_multiple_sources:
-                # Add context about the comprehensive nature
-                enhanced_parts.append("This comprehensive understanding is supported by multiple sources and represents a well-established framework in this field.")
-            
-            # Add practical implications based on domain
-            if any('practical' in fact.lower() or 'implementation' in fact.lower() or 'strategies' in fact.lower() 
-                   for fact in result.supporting_facts):
-                enhanced_parts.append(self._get_implementation_guidance(domain))
-            
-            # Add outcome information based on domain
-            if any('outcome' in fact.lower() or 'result' in fact.lower() or 'achieve' in fact.lower() 
-                   for fact in result.supporting_facts):
-                enhanced_parts.append(self._get_outcome_information(domain))
+            # Only enhance if the answer is very short and we have substantial additional information
+            if len(formatted_answer) < 80 and (has_high_confidence or len(result.supporting_facts) > 2):
+                # Add depth based on available information - but only if it adds real value
+
+                # Only add comprehensive context if we have multiple high-quality sources
+                if has_high_confidence and has_multiple_sources and len(result.source_citations) >= 2:
+                    enhanced_parts.append("This analysis is based on multiple reliable sources and established practices.")
+
+                # Add practical guidance only if the supporting facts clearly mention practical steps
+                practical_keywords = ['steps to', 'how to', 'you should', 'you can', 'recommended', 'best practice', 'solution']
+                if any(any(keyword in fact.lower() for keyword in practical_keywords) for fact in result.supporting_facts):
+                    enhanced_parts.append(self._get_implementation_guidance(domain))
+
+                # Add outcome information only if clearly mentioned in facts
+                outcome_keywords = ['result', 'outcome', 'benefit', 'improvement', 'success', 'effective']
+                if any(any(keyword in fact.lower() for keyword in outcome_keywords) for fact in result.supporting_facts):
+                    enhanced_parts.append(self._get_outcome_information(domain))
             
             return "\n\n".join(enhanced_parts)
             
@@ -593,64 +655,57 @@ IMPORTANT:
             return base_answer
     
     def _format_answer_structure(self, answer: str) -> str:
-        """Format the answer structure for better readability"""
+        """Format the answer structure for better readability - formats numbered lists properly"""
         try:
             import re
             
-            # First, clean up any existing formatting issues
+            # Clean up the answer
             answer = answer.strip()
             
-            # Handle bold formatting in steps (e.g., "1. **Check Driver Status**:")
-            # Convert **text**: to **text:** with proper spacing
-            answer = re.sub(r'\*\*([^*]+)\*\*:\s*', r'**\1:** ', answer)
+            # Check if this has numbered steps that need formatting
+            has_numbered_steps = bool(re.search(r'\d+\.\s+', answer))
             
-            # Split by numbered steps to handle them separately
-            # Look for patterns like "1. **Step Name**: Description"
-            step_pattern = r'(\d+\.\s*\*\*[^*]+\*\*:[^*]+?)(?=\d+\.\s*\*\*|\Z)'
-            steps = re.findall(step_pattern, answer, re.DOTALL)
-            
-            if steps:
-                # Format each step properly
-                formatted_steps = []
-                for step in steps:
-                    step = step.strip()
-                    # Ensure proper line breaks and spacing
-                    step = re.sub(r'\s+', ' ', step)  # Normalize whitespace
-                    formatted_steps.append(step)
+            if has_numbered_steps and '\n' not in answer[:200]:
+                # Steps are in a paragraph - need to format them
                 
-                # Join steps with proper spacing
-                result = '\n\n'.join(formatted_steps)
+                # Step 1: Add single line break before each numbered item
+                # Match patterns like "1. " or "2. " but not in the middle of sentences
+                answer = re.sub(r'(\s)(\d+)\.\s+', r'\n\2. ', answer)
+                
+                # Clean up any double spaces and extra line breaks at start
+                answer = answer.strip()
+                
+                # Step 2: Format sub-steps if they exist (o, -, •)
+                # Add line break before sub-step markers when they follow text
+                answer = re.sub(r'([a-z\)])(\s+)([o•-])\s+', r'\1\n   \3 ', answer)
+                
+                # Step 3: Add proper spacing for keyboard shortcuts and commands
+                # Make Ctrl + Shift + Esc more visible with color
+                answer = re.sub(r'(Ctrl\s*\+\s*Shift\s*\+\s*Esc)', r'<span style="color: #0078d4; font-weight: 600;">\1</span>', answer)
+                answer = re.sub(r'(Windows\s*\+\s*R)', r'<span style="color: #0078d4; font-weight: 600;">\1</span>', answer)
+                
+                # Step 4: Highlight important commands with color
+                answer = re.sub(r'\b(services\.msc|spoolsv\.exe)\b', r'<span style="color: #d83b01; font-weight: 600;">\1</span>', answer)
+                answer = re.sub(r'\b(Task Manager|Print Spooler)\b', r'<span style="color: #107c10; font-weight: 600;">\1</span>', answer)
+                
+                # Step 5: Format the introductory text before steps
+                # Add a line break after "Here are the steps" or "following steps"
+                answer = re.sub(r'(steps to do so:|following steps:|steps:)(\s+\d+\.)', r'\1\n\2', answer, flags=re.IGNORECASE)
+                
             else:
-                # Fallback: handle simple numbered lists
-                # Split into sentences
-                sentences = answer.split('. ')
+                # Already has line breaks or doesn't have numbered steps
+                # Just do basic formatting
                 
-                # Look for numbered steps and format them properly
-                formatted_sentences = []
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if not sentence:
-                        continue
-                    
-                    # Check if this looks like a numbered step
-                    if re.match(r'^\d+\.', sentence):
-                        formatted_sentences.append(sentence)
-                    else:
-                        formatted_sentences.append(sentence)
+                # Normalize excessive whitespace
+                answer = re.sub(r'\n\n+', '\n', answer)
                 
-                # Join with proper spacing
-                result = '. '.join(formatted_sentences)
-                
-                # Ensure proper line breaks for numbered lists
-                result = re.sub(r'(\d+\.)', r'\n\1', result)
-                result = re.sub(r'\n+', '\n', result)
-                result = result.strip()
+                # Still highlight important terms with colors
+                answer = re.sub(r'(Ctrl\s*\+\s*Shift\s*\+\s*Esc)', r'<span style="color: #0078d4; font-weight: 600;">\1</span>', answer)
+                answer = re.sub(r'(Windows\s*\+\s*R)', r'<span style="color: #0078d4; font-weight: 600;">\1</span>', answer)
+                answer = re.sub(r'\b(services\.msc|spoolsv\.exe)\b', r'<span style="color: #d83b01; font-weight: 600;">\1</span>', answer)
+                answer = re.sub(r'\b(Task Manager|Print Spooler)\b', r'<span style="color: #107c10; font-weight: 600;">\1</span>', answer)
             
-            # Final cleanup
-            result = re.sub(r'\n\s*\n', '\n\n', result)  # Normalize paragraph breaks
-            result = result.strip()
-            
-            return result
+            return answer.strip()
             
         except Exception as e:
             logger.error(f"Error formatting answer structure: {e}")
@@ -738,6 +793,88 @@ IMPORTANT:
             answer_parts.append(f" Additionally, {key_concepts[1].lower()}")
         
         return " ".join(answer_parts) if answer_parts else supporting_facts[0].strip()
+
+    def _synthesize_comprehensive_answer(self, supporting_facts: List[str], reasoning_chain: List[str], result) -> str:
+        """Synthesize a comprehensive answer from supporting facts and reasoning chain"""
+        if not supporting_facts and not reasoning_chain:
+            return "No supporting information available."
+
+        # Extract key concepts and build a comprehensive answer
+        key_concepts = []
+        definitions = []
+        purposes = []
+        components = []
+        solutions = []
+        explanations = []
+
+        # Process supporting facts
+        for fact in supporting_facts:
+            fact = fact.strip()
+            if len(fact) < 20:
+                continue
+
+            # Look for definition patterns
+            if any(keyword in fact.lower() for keyword in ['is', 'refers to', 'means', 'involves', 'encompasses', 'defined as', 'represents']):
+                definitions.append(fact)
+            # Look for purpose/goal patterns
+            elif any(keyword in fact.lower() for keyword in ['goal', 'purpose', 'aim', 'objective', 'maximize', 'achieve', 'intended to', 'designed to']):
+                purposes.append(fact)
+            # Look for component/strategy patterns
+            elif any(keyword in fact.lower() for keyword in ['includes', 'strategies', 'components', 'elements', 'aspects', 'steps', 'process']):
+                components.append(fact)
+            # Look for solution patterns
+            elif any(keyword in fact.lower() for keyword in ['solution', 'fix', 'resolve', 'address', 'correct', 'prevent', 'avoid']):
+                solutions.append(fact)
+            # Look for explanation patterns
+            elif any(keyword in fact.lower() for keyword in ['because', 'due to', 'caused by', 'results in', 'leads to']):
+                explanations.append(fact)
+            else:
+                key_concepts.append(fact)
+
+        # Process reasoning chain for additional insights
+        for step in reasoning_chain:
+            step = step.strip()
+            if any(keyword in step.lower() for keyword in ['therefore', 'thus', 'consequently', 'this means', 'the solution is']):
+                solutions.append(step)
+
+        # Build comprehensive answer
+        answer_parts = []
+
+        # Start with definition if available
+        if definitions:
+            answer_parts.append(definitions[0])
+        elif key_concepts:
+            answer_parts.append(key_concepts[0])
+
+        # Add explanation if available
+        if explanations:
+            answer_parts.append(f" This occurs {explanations[0].lower().split('because')[1].strip().split('.')[0].strip()}." if 'because' in explanations[0].lower() else explanations[0])
+
+        # Add solution if available
+        if solutions:
+            answer_parts.append(f" To resolve this, {solutions[0].lower().split('solution')[1].strip().split('.')[0].strip()}." if 'solution' in solutions[0].lower() else solutions[0])
+
+        # Add purpose/goal information
+        if purposes:
+            answer_parts.append(f" The primary goal is to {purposes[0].lower().split('goal')[1].split('.')[0].strip()}." if 'goal' in purposes[0].lower() else purposes[0])
+
+        # Add components/strategies
+        if components:
+            answer_parts.append(f" This involves {components[0].lower().split('involves')[1].split('.')[0].strip()}." if 'involves' in components[0].lower() else components[0])
+
+        # Add additional context if available
+        if len(key_concepts) > 1:
+            answer_parts.append(f" Additionally, {key_concepts[1].lower()}")
+
+        # If we have reasoning chain insights, use them
+        if not answer_parts and reasoning_chain:
+            # Look for the most substantial reasoning step
+            for step in reasoning_chain:
+                if len(step) > 50 and any(keyword in step.lower() for keyword in ['analysis', 'synthesis', 'conclusion']):
+                    return self._format_answer_structure(step)
+
+        answer_text = " ".join(answer_parts) if answer_parts else (supporting_facts[0].strip() if supporting_facts else "Based on the available information:")
+        return self._format_answer_structure(answer_text)
     
     def _synthesize_answer_from_reasoning(self, reasoning_chain: List[str]) -> str:
         """Synthesize an answer from reasoning chain"""

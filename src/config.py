@@ -33,6 +33,7 @@ DEFAULT_CONFIG = {
         "log_level": "INFO",
     },
     "paths": {
+        "models_dir": "models",
         "index_dir": "faiss_index",
         "logs_dir": "logs",
         "cache_dir": "cache",
@@ -44,34 +45,35 @@ DEFAULT_CONFIG = {
         "model_type": "gpt-4o-mini",
         "context_length": 4096,
         "temperature": 0.7,
-        "max_tokens": 600,
+        "max_tokens": 800,  # Match working project
         "threads": None,  # Auto-detect for CPU
+        "gpu_layers": 0,
     },
     "embeddings": {
         "model": "sentence-transformers/all-MiniLM-L6-v2",
         "device": "cpu",  # Always CPU
-        "batch_size": 8,
+        "batch_size": 4,  # Reduced for memory efficiency
         "max_seq_length": 512,
     },
     "indexing": {
-        "chunk_size": 800,
-        "chunk_overlap": 120,
-        "index_type": "hnsw",
-        "persist_every": 2000,
+        "chunk_size": 512,  # Reduced for memory efficiency
+        "chunk_overlap": 50,  # Reduced proportionally
+        "index_type": "flat",  # More reliable than HNSW on limited memory
+        "persist_every": 1000,  # More frequent saves
     },
     "retrieval": {
-        "top_k": 12,
+        "top_k": 8,  # Reduced for memory efficiency
         "min_similarity": 0.25,
         "use_bm25": True,
         "dense_weight": 0.6,
         "sparse_weight": 0.4,
         "context_window": 3,
         "rerank": False,
-        "chunk_size": 800,
-        "chunk_overlap": 120,
+        "chunk_size": 512,  # Match indexing chunk size
+        "chunk_overlap": 50,  # Match indexing overlap
     },
     "reasoning": {
-        "max_tokens": 600,
+        "max_tokens": 800,  # Match working project
         "temperature": 0.7,
         "use_streaming": True,
         "show_steps": True,
@@ -84,6 +86,8 @@ DEFAULT_CONFIG = {
         "audit_logging": True,
         "rate_limit_per_ip": 100,  # queries per hour
         "encrypt_index": False,
+        "offline_mode": True,
+        "no_telemetry": True,
     },
     "enterprise": {
         "multi_user": False,
@@ -103,10 +107,11 @@ class AppConfig:
 
 @dataclass
 class PathsConfig:
-    index_dir: str
-    logs_dir: str
-    cache_dir: str
-    config_dir: str
+    models_dir: str = "models"
+    index_dir: str = "faiss_index"
+    logs_dir: str = "logs"
+    cache_dir: str = "cache"
+    config_dir: Optional[str] = None
 
 @dataclass
 class LLMConfig:
@@ -117,6 +122,7 @@ class LLMConfig:
     temperature: float
     max_tokens: int
     threads: Optional[int] = None
+    gpu_layers: int = 0
 
 @dataclass
 class EmbeddingsConfig:
@@ -160,6 +166,8 @@ class SecurityConfig:
     audit_logging: bool
     rate_limit_per_ip: int
     encrypt_index: bool
+    offline_mode: bool = True
+    no_telemetry: bool = True
 
 @dataclass
 class EnterpriseConfig:
@@ -277,7 +285,15 @@ class ConfigManager:
     def get_cache_path(self) -> Path:
         """Get cache directory path"""
         return Path(self.config.paths.cache_dir).resolve()
-    
+
+    def get_models_path(self) -> Path:
+        """Get models directory path"""
+        return Path(self.config.paths.models_dir).resolve()
+
+    def get_model_path(self) -> Path:
+        """Get model path (alias for get_models_path)"""
+        return self.get_models_path()
+
     def get_config_path(self) -> Path:
         """Get configuration file path"""
         return self.config_path

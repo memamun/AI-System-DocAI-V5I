@@ -1475,23 +1475,23 @@ class EnterpriseApp(QWidget):
             log_error("LLM Config Save Failed", e)
     
     def _load_llm_config(self):
-        """Load saved LLM configuration from config file"""
+        """Load saved LLM configuration from config file (UI only, no connections)"""
         try:
             # Get saved backend from config
             saved_backend = config_manager.config.llm.backend
-            
+
             # Block signals to prevent on_backend_change from firing during initialization
             self.cbLLM.blockSignals(True)
-            
+
             # Set the combo box to the saved backend
             for i in range(self.cbLLM.count()):
                 if self.cbLLM.itemData(i) == saved_backend:
                     self.cbLLM.setCurrentIndex(i)
                     break
-            
+
             # Re-enable signals
             self.cbLLM.blockSignals(False)
-            
+
             # Set model name if available
             if saved_backend == "llama_cpp" and config_manager.config.llm.model_path:
                 model_path = config_manager.config.llm.model_path
@@ -1501,18 +1501,19 @@ class EnterpriseApp(QWidget):
                 self.eModelName.setText(model_name)
             elif saved_backend == "hf_local" and config_manager.config.llm.model_path:
                 self.eModelName.setText(config_manager.config.llm.model_path)
-            
-            # Apply the configuration silently (no warnings on startup)
-            self.apply_llm(silent=True)
-            
+
+            # Set LLM to "none" during startup to avoid connection attempts
+            # The actual LLM will be loaded when user clicks Apply
+            self.llm = create_llm("none")
+
             log_operation("LLM Config Loaded", f"Backend: {saved_backend}")
-            
+
         except Exception as e:
             log_error("LLM Config Load Failed", e)
             # Re-enable signals if there was an error
             self.cbLLM.blockSignals(False)
-            # Fallback to default (silently)
-            self.apply_llm(silent=True)
+            # Fallback to "none" (no connections)
+            self.llm = create_llm("none")
     
     def ask(self):
         """Ask a question with enhanced reasoning"""

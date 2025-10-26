@@ -80,8 +80,44 @@ class Indexer:
         # Force CPU-only
         device = "cpu"
 
-        self.on_status(f"Loading embedding model '{self.cfg.embed_model}' on {device}…")
-        emb = SentenceTransformer(self.cfg.embed_model, device=device)
+        # Set environment variables for this process too
+        import os
+        cache_dir = self.out_dir.parent / "cache" / "transformers"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)
+        os.environ["HF_HOME"] = str(cache_dir)
+        os.environ["SENTENCE_TRANSFORMERS_HOME"] = str(cache_dir)
+
+        # Pre-download and load embedding model with retry logic
+        self.on_status(f"Preparing embedding model '{self.cfg.embed_model}' on {device}…")
+
+        # Import the improved embedding loader
+        from embeddings import ensure_model_available, load_embedding_model
+
+        # First ensure model is available (pre-download if needed)
+        if not ensure_model_available(self.cfg.embed_model):
+            self.on_status(f"Warning: Could not pre-download {self.cfg.embed_model}. Will try to load during indexing.")
+
+        # Try to load from local cache first
+        local_model_path = cache_dir / "models--sentence-transformers--all-MiniLM-L6-v2" / "snapshots"
+        if local_model_path.exists():
+            import glob
+            model_dirs = glob.glob(str(local_model_path / "*"))
+            if model_dirs:
+                actual_model_path = model_dirs[0]
+                self.on_status(f"Loading model from local cache: {self.cfg.embed_model}")
+                try:
+                    emb = SentenceTransformer(actual_model_path, device="cpu", trust_remote_code=False)
+                    self.on_status(f"Embedder: {self.cfg.embed_model} ready (CPU)")
+                except Exception as e:
+                    self.on_status(f"Error loading from cache, falling back to online: {e}")
+                    emb = load_embedding_model(self.cfg.embed_model)
+            else:
+                emb = load_embedding_model(self.cfg.embed_model)
+        else:
+            # Load the embedding model with retry logic
+            emb = load_embedding_model(self.cfg.embed_model)
+
         self.on_status(f"Embedder: {self.cfg.embed_model} ready (CPU)")
 
         files = list(iter_files(folder))
