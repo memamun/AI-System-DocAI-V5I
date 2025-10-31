@@ -19,8 +19,8 @@ from PyQt6.QtWidgets import (
     QSplitter, QTreeWidget, QTreeWidgetItem, QHeaderView, QScrollArea, QFrame,
     QRadioButton, QSpinBox, QDoubleSpinBox
 )
-from PyQt6.QtCore import QThread, pyqtSignal, QUrl, QTimer
-from PyQt6.QtGui import QDesktopServices, QFont, QIcon, QSyntaxHighlighter, QTextCharFormat, QColor
+from PyQt6.QtCore import QThread, pyqtSignal, QUrl, QTimer, Qt, QEvent
+from PyQt6.QtGui import QDesktopServices, QFont, QIcon, QSyntaxHighlighter, QTextCharFormat, QColor, QScreen
 
 from indexer import Indexer
 from retrieval import Retriever
@@ -115,6 +115,23 @@ class EnterpriseIndexThread(QThread):
         files, vecs = idx.build(self.folder)
         self.done.emit(files, vecs)
 
+class IndexLoaderThread(QThread):
+    """Background thread for loading FAISS index without blocking UI"""
+    loaded = pyqtSignal(object)  # Emits Retriever instance
+    error = pyqtSignal(str)
+    
+    def __init__(self, index_path: Path):
+        super().__init__()
+        self.index_path = index_path
+    
+    def run(self):
+        try:
+            from retrieval import Retriever
+            retriever = Retriever(self.index_path)
+            self.loaded.emit(retriever)
+        except Exception as e:
+            self.error.emit(str(e))
+
 class AskThread(QThread):
     """Thread for asking questions and getting answers with reasoning."""
     ready = pyqtSignal(ReasoningResult)
@@ -140,7 +157,7 @@ class AskThread(QThread):
                 query=self.query,
                 context=context,
                 llm_backend=self.llm_backend,
-                device_string=get_device_string()
+                device_string=config_manager.get_llm_device()
             )
             
             self.ready.emit(result)
@@ -265,7 +282,7 @@ class DiagnosticsWidget(QWidget):
         model_info = [
             ("LLM Backend", "llm_backend"),
             ("Embedding Model", "embed_model"),
-            ("Index Status", "index_status"),
+            # ("Index Status", "index_status"),
             ("Index Vectors", "index_vectors"),
             ("Available Backends", "available_backends")
         ]
@@ -373,23 +390,23 @@ class DiagnosticsWidget(QWidget):
             # Embedding Model
             self.model_labels["embed_model"].setText(config.embeddings.model)
             
-            # Index Status
-            idx_path = config_manager.get_index_path() / "index.faiss"
-            if idx_path.exists():
-                try:
-                    retriever = Retriever(config_manager.get_index_path())
-                    info = retriever.get_index_info()
-                    self.model_labels["index_status"].setText("Available")
-                    self.model_labels["index_status"].setStyleSheet("font-weight: bold; color: #27ae60;")
-                    self.model_labels["index_vectors"].setText(str(info["total_vectors"]))
-                except Exception:
-                    self.model_labels["index_status"].setText("Error")
-                    self.model_labels["index_status"].setStyleSheet("font-weight: bold; color: #e74c3c;")
-                    self.model_labels["index_vectors"].setText("N/A")
-            else:
-                self.model_labels["index_status"].setText("Not Found")
-                self.model_labels["index_status"].setStyleSheet("font-weight: bold; color: #f39c12;")
-                self.model_labels["index_vectors"].setText("N/A")
+            # # Index Status
+            # idx_path = config_manager.get_index_path() / "index.faiss"
+            # if idx_path.exists():
+            #     try:
+            #         retriever = Retriever(config_manager.get_index_path())
+            #         info = retriever.get_index_info()
+            #         self.model_labels["index_status"].setText("Available")
+            #         self.model_labels["index_status"].setStyleSheet("font-weight: bold; color: #27ae60;")
+            #         self.model_labels["index_vectors"].setText(str(info["total_vectors"]))
+            #     except Exception:
+            #         self.model_labels["index_status"].setText("Error")
+            #         self.model_labels["index_status"].setStyleSheet("font-weight: bold; color: #e74c3c;")
+            #         self.model_labels["index_vectors"].setText("N/A")
+            # else:
+            #     self.model_labels["index_status"].setText("Not Found")
+            #     self.model_labels["index_status"].setStyleSheet("font-weight: bold; color: #f39c12;")
+            #     self.model_labels["index_vectors"].setText("N/A")
             
             # Available Backends
             backends = get_available_backends()
@@ -499,33 +516,192 @@ class EnterpriseApp(QWidget):
         
         # Load saved LLM configuration
         self._load_llm_config()
+        # Attempt to auto-apply saved LLM silently (useful for Ollama/local)
+        try:
+            self.apply_llm(silent=True)
+        except Exception:
+            pass
+        
+        # Check if LLM needs to be configured (first startup)
+        self._check_and_prompt_llm_setup()
+    
+    def _is_dark_mode(self):
+        """Detect if the system/app is in dark mode"""
+        app = QApplication.instance()
+        if app:
+            palette = app.palette()
+            window_color = palette.color(palette.ColorRole.Window)
+            # Use YIQ brightness formula to determine if background is dark
+            brightness = window_color.red() * 0.299 + window_color.green() * 0.587 + window_color.blue() * 0.114
+            return brightness < 128
+        return False
+    
+    def _update_status_bar_theme(self):
+        """Update status bar styling based on current theme"""
+        is_dark = self._is_dark_mode()
+        
+        if is_dark:
+            # Dark mode colors
+            bg_color = "#2b2b2b"  # Dark gray background
+            text_color = "#e0e0e0"  # Light gray text
+            border_color = "#404040"  # Subtle border
+        else:
+            # Light mode colors
+            bg_color = "#f0f0f0"  # Light gray background
+            text_color = "#2c3e50"  # Dark gray text
+            border_color = "#d0d0d0"  # Light border
+        
+        # Update status bar widget styling - ensure it applies to frame and all children
+        if hasattr(self, 'status_bar_widget'):
+            self.status_bar_widget.setStyleSheet(f"""
+                QFrame {{
+                    background-color: {bg_color};
+                    border: none;
+                }}
+                QFrame QLabel {{
+                    background-color: transparent;
+                    color: {text_color};
+                }}
+            """)
+        
+        # Update label colors explicitly
+        if hasattr(self, 'status_label'):
+            # Get current status text if it exists
+            current_text = self.status_label.text()
+            if current_text:
+                # If it contains HTML (like the connected/disconnected status), update the text color part
+                if "<span" in current_text:
+                    # Extract the status text (Connected/Disconnected) and preserve dot color
+                    if "Connected" in current_text:
+                        dot_color = "#2ecc71"  # Green dot
+                        status_text = "Connected"
+                    else:
+                        dot_color = "#e74c3c"  # Red dot
+                        status_text = current_text.split(">")[-1] if ">" in current_text else "Disconnected"
+                    self.status_label.setText(f"<span style='color:{dot_color}'>&#9679;</span> <span style='color:{text_color}'>{status_text}</span>")
+                else:
+                    # Plain text, just set the color
+                    self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+            else:
+                self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+        
+        if hasattr(self, 'llm_status_label'):
+            self.llm_status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+        
+        if hasattr(self, 'gpu_status_label'):
+            # GPU status stays blue for visibility in both themes
+            self.gpu_status_label.setStyleSheet("color: #3498db; font-weight: bold;")
+    
+    def showEvent(self, event):
+        """Override showEvent to ensure status bar is visible when window is shown"""
+        super().showEvent(event)
+        if hasattr(self, 'status_bar_widget'):
+            self.status_bar_widget.setVisible(True)
+            self.status_bar_widget.show()
+            self.updateGeometry()
+        # Update theme when window is shown (in case theme changed)
+        self._update_status_bar_theme()
+    
+    def resizeEvent(self, event):
+        """Override resizeEvent to ensure status bar stays visible during resize"""
+        super().resizeEvent(event)
+        if hasattr(self, 'status_bar_widget'):
+            self.status_bar_widget.setVisible(True)
+            self.status_bar_widget.show()
+        # Update theme in case it changed
+        self._update_status_bar_theme()
+    
+    def changeEvent(self, event):
+        """Override changeEvent to detect palette changes (theme changes)"""
+        super().changeEvent(event)
+        # QEvent.Type.PaletteChange is triggered when system theme changes
+        if event.type() == event.Type.PaletteChange:
+            # Theme changed, update status bar (this will update all labels including status_label)
+            self._update_status_bar_theme()
     
     def setup_ui(self):
         """Setup the main UI"""
         self.setWindowTitle("AI-System-DocAI V5I - Enterprise Edition")
-        self.setGeometry(100, 100, 1200, 800)
+        # Get screen geometry and set window size appropriately
+        # Note: QApplication must exist before accessing primaryScreen()
+        app = QApplication.instance()
+        if app:
+            screen = app.primaryScreen()
+            if screen:
+                screen_geometry = screen.availableGeometry()
+                # Set size to 90% of available screen size, or minimum 800x600
+                width = max(800, int(screen_geometry.width() * 0.9))
+                height = max(600, int(screen_geometry.height() * 0.9))
+                x = (screen_geometry.width() - width) // 2
+                y = (screen_geometry.height() - height) // 2
+                self.setGeometry(x, y, width, height)
+            else:
+                # Fallback to default size
+                self.setGeometry(100, 100, 1200, 800)
+        else:
+            # Fallback to default size if QApplication not yet created
+            self.setGeometry(100, 100, 1200, 800)
         
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
-        # Create tab widget
+        # Create tab widget - give it stretch factor so it takes available space
         self.tabs = QTabWidget()
-        layout.addWidget(self.tabs)
+        # Ensure tabs widget respects layout constraints
+        self.tabs.setMinimumHeight(100)  # Prevent tabs from collapsing
+        layout.addWidget(self.tabs, 1)  # Stretch factor 1 means it takes available space
         
         # Setup tabs
         self.setup_main_tab()
         self.setup_diagnostics_tab()
         
-        # Status bar
-        status_layout = QHBoxLayout()
+        # Status bar - ensure it's always visible
+        # Create a container widget with fixed minimum height
+        self.status_bar_widget = QFrame()
+        self.status_bar_widget.setMinimumHeight(30)
+        self.status_bar_widget.setMaximumHeight(40)
+        self.status_bar_widget.setFrameStyle(QFrame.Shape.StyledPanel)
+        # Theme will be applied by _update_status_bar_theme()
+        # Set size policy to prevent the status bar from stretching vertically
+        from PyQt6.QtWidgets import QSizePolicy
+        self.status_bar_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # Ensure status bar stays visible and is always shown
+        self.status_bar_widget.setVisible(True)
+        
+        status_layout = QHBoxLayout(self.status_bar_widget)
+        status_layout.setContentsMargins(5, 5, 5, 5)
         self.status_label = QLabel("Ready")
+        self.status_label.setMinimumHeight(20)
         self.gpu_status_label = QLabel("")
+        self.gpu_status_label.setMinimumHeight(20)
+        self.llm_status_label = QLabel("")
+        self.llm_status_label.setMinimumHeight(20)
         status_layout.addWidget(self.status_label)
         status_layout.addStretch()
+        status_layout.addWidget(self.llm_status_label)
         status_layout.addWidget(self.gpu_status_label)
-        layout.addLayout(status_layout)
+        # Add status bar with stretch factor 0 to prevent it from expanding
+        # Add it AFTER tabs so it appears at the bottom - this is critical for layout order
+        layout.addWidget(self.status_bar_widget, 0)
+        
+        # Ensure layout respects the status bar by setting a minimum size for the entire window
+        self.setMinimumSize(800, 600)
         
         # Update GPU status
         self.update_gpu_status()
+        
+        # Apply theme-aware styling to status bar
+        self._update_status_bar_theme()
+        
+        # React to sub-tab changes to auto-prepare Chat
+        try:
+            self.main_tabs.currentChanged.connect(self.on_main_subtab_changed)
+        except Exception:
+            pass
+        
+        # Also react to main tab changes to ensure status bar stays visible
+        self.tabs.currentChanged.connect(self.on_main_tab_changed)
     
     def setup_main_tab(self):
         """Setup the main tab with enhanced functionality"""
@@ -533,17 +709,17 @@ class EnterpriseApp(QWidget):
         layout = QVBoxLayout(main_widget)
         
         # Create tab widget for Main functionality
-        main_tabs = QTabWidget()
-        layout.addWidget(main_tabs)
+        self.main_tabs = QTabWidget()
+        layout.addWidget(self.main_tabs)
         
         # Tab 1: Indexing
-        self.setup_indexing_tab(main_tabs)
+        self.setup_indexing_tab(self.main_tabs)
         
         # Tab 2: Chat
-        self.setup_chat_tab(main_tabs)
+        self.setup_chat_tab(self.main_tabs)
         
         # Tab 3: Index Management
-        self.setup_index_management_tab(main_tabs)
+        self.setup_index_management_tab(self.main_tabs)
         
         self.tabs.addTab(main_widget, "Main")
     
@@ -707,6 +883,8 @@ class EnterpriseApp(QWidget):
         layout.addLayout(output_layout, 1)
         
         parent_tabs.addTab(chat_widget, "Chat")
+        # Keep a reference for tab-change handling
+        self.chat_tab = chat_widget
     
     def setup_index_management_tab(self, parent_tabs):
         """Setup the index management tab"""
@@ -800,6 +978,149 @@ class EnterpriseApp(QWidget):
         """Update device status in status bar (CPU-only)"""
         self.gpu_status_label.setText("Device: CPU")
         self.gpu_status_label.setStyleSheet("color: #3498db; font-weight: bold;")
+
+    def update_llm_status(self):
+        """Update LLM backend status in the status bar"""
+        try:
+            backend = config_manager.config.llm.backend
+            if backend == "ollama":
+                model = (config_manager.config.llm.model_type or "-")
+                base_url = (config_manager.config.llm.model_path or "http://localhost:11434")
+                text = f"LLM: Ollama • {model} @ {base_url}"
+                # Also update Ollama connectivity when Ollama is selected (updates status_label)
+                self.update_ollama_connection_status(base_url)
+            elif backend == "hf_local":
+                model = (config_manager.config.llm.model_path or "-")
+                text = f"LLM: HF Local • {model}"
+                self.status_label.setText("Ready")
+                # Apply theme-aware color
+                is_dark = self._is_dark_mode()
+                text_color = "#e0e0e0" if is_dark else "#2c3e50"
+                self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+            elif backend == "llama_cpp":
+                model = (config_manager.config.llm.model_path or "-")
+                text = f"LLM: LlamaCpp • {model}"
+                self.status_label.setText("Ready")
+                # Apply theme-aware color
+                is_dark = self._is_dark_mode()
+                text_color = "#e0e0e0" if is_dark else "#2c3e50"
+                self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+            elif backend in ("openai", "gemini", "anthropic"):
+                text = f"LLM: {backend}"
+                self.status_label.setText("Ready")
+                # Apply theme-aware color
+                is_dark = self._is_dark_mode()
+                text_color = "#e0e0e0" if is_dark else "#2c3e50"
+                self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+            else:
+                text = "LLM: —"
+                self.status_label.setText("Ready")
+                # Apply theme-aware color
+                is_dark = self._is_dark_mode()
+                text_color = "#e0e0e0" if is_dark else "#2c3e50"
+                self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+            self.llm_status_label.setText(text)
+            # Use theme-aware color (will be updated by _update_status_bar_theme)
+            is_dark = self._is_dark_mode()
+            text_color = "#e0e0e0" if is_dark else "#2c3e50"
+            self.llm_status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
+        except Exception:
+            self.llm_status_label.setText("LLM: —")
+
+    def update_ollama_connection_status(self, base_url: str | None = None):
+        """Check Ollama connectivity via /api/tags and update status label."""
+        try:
+            import requests
+            url = (base_url or config_manager.config.llm.model_path or "http://localhost:11434").rstrip('/')
+            resp = requests.get(f"{url}/api/tags", timeout=3)
+            # Get theme-aware text color
+            is_dark = self._is_dark_mode()
+            text_color = "#e0e0e0" if is_dark else "#2c3e50"
+            
+            if resp.status_code == 200:
+                # Green dot icon + Connected text with theme-aware color
+                self.status_label.setText(f"<span style='color:#2ecc71'>&#9679;</span> <span style='color:{text_color}'>Connected</span>")
+                self.status_label.setStyleSheet("font-weight: bold;")
+            else:
+                # Red dot icon + Disconnected text with theme-aware color
+                self.status_label.setText(f"<span style='color:#e74c3c'>&#9679;</span> <span style='color:{text_color}'>Disconnected</span>")
+                self.status_label.setStyleSheet("font-weight: bold;")
+        except Exception:
+            # Red dot icon + Disconnected text on error with theme-aware color
+            is_dark = self._is_dark_mode()
+            text_color = "#e0e0e0" if is_dark else "#2c3e50"
+            self.status_label.setText(f"<span style='color:#e74c3c'>&#9679;</span> <span style='color:{text_color}'>Disconnected</span>")
+            self.status_label.setStyleSheet("font-weight: bold;")
+
+    def on_main_tab_changed(self, idx: int):
+        """When user switches between main tabs (Main, Diagnostics), ensure status bar stays visible."""
+        try:
+            # Ensure status bar is always visible
+            if hasattr(self, 'status_bar_widget'):
+                self.status_bar_widget.setVisible(True)
+                self.status_bar_widget.show()
+                # Force layout update to ensure status bar is positioned correctly
+                self.updateGeometry()
+                self.layout().update()
+                QApplication.processEvents()
+        except Exception as e:
+            log_warning("Main tab change handler error", e)
+    
+    def on_main_subtab_changed(self, idx: int):
+        """When user switches within Main tabs, auto-load index and apply LLM on Chat tab."""
+        try:
+            # Ensure status bar stays visible when switching sub-tabs
+            if hasattr(self, 'status_bar_widget'):
+                self.status_bar_widget.setVisible(True)
+                self.status_bar_widget.show()
+                # Force layout recalculation to ensure status bar is visible
+                self.updateGeometry()
+                self.layout().update()
+                QApplication.processEvents()
+            
+            if getattr(self, 'main_tabs', None) and getattr(self, 'chat_tab', None):
+                if self.main_tabs.widget(idx) is self.chat_tab:
+                    # Ensure LLM is applied first (fast, doesn't block)
+                    if self.llm is None or getattr(self.llm, 'name', '') == 'citations-only':
+                        try:
+                            self.apply_llm(silent=True)
+                            self.update_llm_status()
+                        except Exception as e:
+                            log_warning("Auto-apply LLM failed", e)
+                    
+                    # Load index in background if not already loaded
+                    if self.retriever is None:
+                        idx_path = config_manager.get_index_path() / "index.faiss"
+                        if idx_path.exists():
+                            # Show loading indicator
+                            self.lblIndex.setText(self.index_status_text() + " • Loading...")
+                            # Start background loader
+                            if not hasattr(self, 'index_loader') or not self.index_loader.isRunning():
+                                self.index_loader = IndexLoaderThread(config_manager.get_index_path())
+                                self.index_loader.loaded.connect(self.on_index_loaded)
+                                self.index_loader.error.connect(self.on_index_load_error)
+                                self.index_loader.start()
+                        else:
+                            self.lblIndex.setText(self.index_status_text())
+        except Exception as e:
+            log_warning("Tab change handler error", e)
+    
+    def on_index_loaded(self, retriever):
+        """Callback when index finishes loading in background"""
+        try:
+            self.retriever = retriever
+            self.lblIndex.setText(
+                self.index_status_text() + 
+                f"  • vectors={self.retriever.idx.ntotal}  • embed={self.retriever.embed_model}"
+            )
+            log_info(f"Index loaded asynchronously: {self.retriever.idx.ntotal} vectors")
+        except Exception as e:
+            log_error("Error setting loaded index", e)
+    
+    def on_index_load_error(self, error_msg: str):
+        """Callback when index loading fails"""
+        self.lblIndex.setText(self.index_status_text() + " • Load failed")
+        log_warning(f"Index load error: {error_msg}")
     
     def pick_folder(self):
         """Pick folder for indexing"""
@@ -933,8 +1254,12 @@ class EnterpriseApp(QWidget):
             # Apply backend
             try:
                 self.llm = create_llm("openai", model=model)
+                # Save backend to config
+                self._save_llm_config("openai", model)
                 QMessageBox.information(self, "LLM", f"Applied: {self.llm.name}")
                 log_operation("LLM Backend Changed", f"OpenAI: {model}")
+                # Update status bar to reflect changes
+                self.update_llm_status()
             except Exception as e:
                 QMessageBox.warning(self, "LLM error", str(e))
                 self.cbLLM.setCurrentIndex(0)
@@ -989,8 +1314,12 @@ class EnterpriseApp(QWidget):
             # Apply backend
             try:
                 self.llm = create_llm("anthropic", model=model)
+                # Save backend to config
+                self._save_llm_config("anthropic", model)
                 QMessageBox.information(self, "LLM", f"Applied: {self.llm.name}")
                 log_operation("LLM Backend Changed", f"Anthropic: {model}")
+                # Update status bar to reflect changes
+                self.update_llm_status()
             except Exception as e:
                 QMessageBox.warning(self, "LLM error", str(e))
                 self.cbLLM.setCurrentIndex(0)
@@ -1048,8 +1377,12 @@ class EnterpriseApp(QWidget):
             # Apply backend
             try:
                 self.llm = create_llm("gemini", model=model)
+                # Save backend to config
+                self._save_llm_config("gemini", model)
                 QMessageBox.information(self, "LLM", f"Applied: {self.llm.name}")
                 log_operation("LLM Backend Changed", f"Gemini: {model}")
+                # Update status bar to reflect changes
+                self.update_llm_status()
             except Exception as e:
                 QMessageBox.warning(self, "LLM error", str(e))
                 self.cbLLM.setCurrentIndex(0)
@@ -1065,9 +1398,10 @@ class EnterpriseApp(QWidget):
         
         layout = QFormLayout(dialog)
         
-        # Base URL
+        # Base URL: prefer config, then env, then default
         url_edit = QLineEdit()
-        url_edit.setText(os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
+        default_base = config_manager.config.llm.model_path or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        url_edit.setText(default_base)
         layout.addRow("Base URL:", url_edit)
         
         # Model selection
@@ -1088,6 +1422,15 @@ class EnterpriseApp(QWidget):
         custom_model = QLineEdit()
         custom_model.setPlaceholderText("Or enter custom model name")
         layout.addRow("Custom:", custom_model)
+
+        # Preselect model from config if present
+        configured_model = (config_manager.config.llm.model_type or os.getenv("OLLAMA_MODEL", "")).strip()
+        if configured_model:
+            idx = model_combo.findText(configured_model)
+            if idx >= 0:
+                model_combo.setCurrentIndex(idx)
+            else:
+                custom_model.setText(configured_model)
         
         # Test connection button
         test_btn = QPushButton("Test Connection")
@@ -1121,9 +1464,13 @@ class EnterpriseApp(QWidget):
             try:
                 self.llm = create_llm("ollama", model=model, base_url=base_url)
                 self.eModelName.setText(model)
-                self._save_llm_config("ollama", model)
+                self._save_llm_config("ollama", model, base_url)
                 QMessageBox.information(self, "Configuration Saved", f"Ollama model configured: {model}")
                 log_operation("LLM Backend Changed", f"Ollama: {model}")
+                # Update status bar to reflect changes
+                self.update_llm_status()
+                # Re-check Ollama connectivity
+                self.update_ollama_connection_status(base_url)
             except Exception as e:
                 QMessageBox.warning(self, "LLM error", str(e))
                 self.cbLLM.setCurrentIndex(0)
@@ -1202,6 +1549,8 @@ class EnterpriseApp(QWidget):
                 self.eModelName.setText(model_name)
                 self._save_llm_config("hf_local", model_name)
                 QMessageBox.information(self, "Configuration Saved", f"HuggingFace model configured: {model_name}")
+                # Update status bar to reflect changes
+                self.update_llm_status()
     
     def _download_huggingface_model(self, dialog, model_combo, custom_model):
         """Download HuggingFace model immediately"""
@@ -1299,6 +1648,8 @@ class EnterpriseApp(QWidget):
                 self.eModelName.setText(model)
                 self._save_llm_config("llama_cpp", model)
                 QMessageBox.information(self, "Configuration Saved", f"LlamaCpp model configured: {model}")
+                # Update status bar to reflect changes
+                self.update_llm_status()
     
     def _browse_llama_model_file(self, parent, path_edit):
         """Browse for LlamaCpp model file"""
@@ -1417,9 +1768,30 @@ class EnterpriseApp(QWidget):
                         "try rephrasing your question or switch to a different LLM backend (OpenAI, Anthropic, or Ollama)."
                     )
             elif kind == "ollama":
-                model = os.getenv("OLLAMA_MODEL", "llama2")
-                base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+                # Priority: UI field > config file > environment variables > defaults
+                # If UI field has value, use it; otherwise use config (which may have been loaded from env on first save)
+                ui_model = name.strip() if name else ""
+                if ui_model:
+                    model = ui_model
+                else:
+                    # Use config value (preferred) or env var, then default
+                    model = config_manager.config.llm.model_type or os.getenv("OLLAMA_MODEL") or "llama2"
+                
+                # For base_url, check config first (model_path stores the Ollama base URL)
+                base_url = config_manager.config.llm.model_path or os.getenv("OLLAMA_BASE_URL") or "http://localhost:11434"
+                
+                # Ensure base_url doesn't have trailing slash issues
+                base_url = base_url.rstrip('/')
+                
                 self.llm = create_llm("ollama", model=model, base_url=base_url)
+                
+                # If we used config values, update UI to show them
+                if not ui_model and config_manager.config.llm.model_type:
+                    self.eModelName.setText(config_manager.config.llm.model_type)
+                
+                # Store for saving
+                ollama_model = model
+                ollama_base_url = base_url
             elif kind == "hf_local":
                 model_id = name or "microsoft/DialoGPT-medium"
                 self.llm = create_llm("hf_local", model_id=model_id, lazy_load=True)
@@ -1432,7 +1804,11 @@ class EnterpriseApp(QWidget):
                 return
             
             # Save LLM configuration to config file
-            self._save_llm_config(kind, name)
+            if kind == "ollama":
+                # Save both model and base_url for Ollama
+                self._save_llm_config(kind, ollama_model, ollama_base_url)
+            else:
+                self._save_llm_config(kind, name)
             
             # Show appropriate message based on backend
             if kind == "hf_local":
@@ -1446,13 +1822,18 @@ class EnterpriseApp(QWidget):
                 QMessageBox.information(self, "LLM", f"Applied: {self.llm.name}")
             
             log_operation("LLM Backend Applied", f"{kind}: {self.llm.name}")
+            # Update status bar
+            self.update_llm_status()
+            # If Ollama, re-check connectivity now
+            if kind == "ollama":
+                self.update_ollama_connection_status()
             
         except Exception as e:
             QMessageBox.warning(self, "LLM error", str(e))
             self.llm = create_llm("none")
             log_error("LLM Application Failed", e)
     
-    def _save_llm_config(self, backend: str, model_name: str = ""):
+    def _save_llm_config(self, backend: str, model_name: str = "", base_url: str = ""):
         """Save LLM configuration to config file"""
         try:
             # Update config with new LLM settings
@@ -1460,10 +1841,15 @@ class EnterpriseApp(QWidget):
             
             if backend == "llama_cpp" and model_name:
                 config_manager.config.llm.model_path = model_name
-            elif backend in ["openai", "anthropic", "gemini", "ollama"]:
+            elif backend in ["openai", "anthropic", "gemini"]:
                 # For API backends, we don't need to save model path in config
                 # The model is determined by environment variables
                 pass
+            elif backend == "ollama":
+                if model_name:
+                    config_manager.config.llm.model_type = model_name
+                if base_url:
+                    config_manager.config.llm.model_path = base_url
             elif backend == "hf_local" and model_name:
                 config_manager.config.llm.model_path = model_name
             
@@ -1473,6 +1859,63 @@ class EnterpriseApp(QWidget):
             
         except Exception as e:
             log_error("LLM Config Save Failed", e)
+
+    def _render_markdown_basic(self, text: str) -> str:
+        """Minimal markdown-to-HTML renderer for bold/inline-code. Safe for our pre-wrap blocks.
+        Converts **bold**, __bold__, and `code` while leaving other text untouched.
+        """
+        try:
+            import re
+            html = text
+            # Inline code first to avoid interfering with bold markers inside code
+            html = re.sub(r"`([^`]+)`", r"<code>\1</code>", html)
+            # Bold variants
+            html = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html)
+            html = re.sub(r"__(.+?)__", r"<b>\1</b>", html)
+            return html
+        except Exception:
+            return text
+    
+    def _check_and_prompt_llm_setup(self):
+        """Check if LLM is configured, and show setup dialog on first startup if needed"""
+        try:
+            # Check if LLM is set to "none" or not properly configured
+            backend = config_manager.config.llm.backend
+            llm_name = getattr(self.llm, 'name', '') if self.llm else ''
+            
+            # Show dialog if no LLM or "citations-only"
+            if backend == "none" or llm_name == "citations-only" or self.llm is None:
+                reply = QMessageBox.question(
+                    self,
+                    "Configure LLM Backend",
+                    "No LLM backend is currently configured.\n\n"
+                    "Would you like to configure an LLM backend now?\n\n"
+                    "You can configure:\n"
+                    "• Ollama (Local Server)\n"
+                    "• OpenAI / Compatible API\n"
+                    "• Anthropic Claude\n"
+                    "• Google Gemini\n"
+                    "• HuggingFace Local\n"
+                    "• LlamaCpp (GGUF)\n\n"
+                    "Click 'Yes' to configure, or 'No' to continue without an LLM (citations only).",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+                
+                if reply == QMessageBox.StandardButton.Yes:
+                    # Switch to Chat tab where LLM config is visible
+                    self.tabs.setCurrentIndex(0)  # Main tab
+                    if hasattr(self, 'main_tabs'):
+                        self.main_tabs.setCurrentIndex(1)  # Chat sub-tab
+                    
+                    # Show configuration dialog for current backend or Ollama by default
+                    if backend == "ollama":
+                        self._configure_ollama()
+                    else:
+                        # Default to Ollama configuration
+                        self.configure_current_backend()
+        except Exception as e:
+            log_warning(f"Error in LLM setup check: {e}")
     
     def _load_llm_config(self):
         """Load saved LLM configuration from config file (UI only, no connections)"""
@@ -1492,7 +1935,7 @@ class EnterpriseApp(QWidget):
             # Re-enable signals
             self.cbLLM.blockSignals(False)
 
-            # Set model name if available
+            # Set model name/URL if available from config
             if saved_backend == "llama_cpp" and config_manager.config.llm.model_path:
                 model_path = config_manager.config.llm.model_path
                 # Extract just the filename for display
@@ -1501,12 +1944,21 @@ class EnterpriseApp(QWidget):
                 self.eModelName.setText(model_name)
             elif saved_backend == "hf_local" and config_manager.config.llm.model_path:
                 self.eModelName.setText(config_manager.config.llm.model_path)
+            elif saved_backend == "ollama":
+                # For Ollama, model_type is the model name, model_path is the base URL
+                if config_manager.config.llm.model_type:
+                    self.eModelName.setText(config_manager.config.llm.model_type)
 
             # Set LLM to "none" during startup to avoid connection attempts
             # The actual LLM will be loaded when user clicks Apply
             self.llm = create_llm("none")
 
             log_operation("LLM Config Loaded", f"Backend: {saved_backend}")
+            # Update LLM status label from saved config
+            self.update_llm_status()
+            # Initial Ollama connectivity probe if selected
+            if saved_backend == "ollama":
+                self.update_ollama_connection_status()
 
         except Exception as e:
             log_error("LLM Config Load Failed", e)
@@ -1531,6 +1983,13 @@ class EnterpriseApp(QWidget):
             if not idx_path.exists():
                 QMessageBox.warning(self, "No Index", "No index found. Please build an index first using the Indexing tab.")
                 return
+            
+            # Check if index is currently loading in background
+            if hasattr(self, 'index_loader') and self.index_loader.isRunning():
+                QMessageBox.information(self, "Index Loading", "Please wait for the index to finish loading. It will be ready shortly.")
+                return
+            
+            # If not loading, try to load synchronously (fallback)
             try:
                 self.retriever = Retriever(config_manager.get_index_path())
                 self.lblIndex.setText(
@@ -1600,10 +2059,29 @@ class EnterpriseApp(QWidget):
         log_operation("Answer Generated", "Answer provided to user")
     
     def _format_answer_with_citations(self, answer: str, source_citations: List[Any]) -> str:
-        """Format the final answer with beautiful source citations like the original project"""
+        """Format the final answer with beautiful source citations"""
         if not source_citations:
             return answer
         
+        # Detect dark or light mode for colors
+        app = QApplication.instance()
+        is_dark = False
+        if app:
+            palette = app.palette()
+            window_color = palette.color(palette.ColorRole.Window)
+            brightness = window_color.red() * 0.299 + window_color.green() * 0.587 + window_color.blue() * 0.114
+            is_dark = brightness < 128
+
+        # Theme-aware colors
+        if is_dark:
+            label_color = "#93C5FD"     # light blue for section label
+            filename_color = "#FFFFFF"  # bright white for high contrast
+            link_color = "#60A5FA"      # blue-400 for links
+        else:
+            label_color = "#1F3A8A"     # indigo-800
+            filename_color = "#2c3e50"  # dark slate
+            link_color = "#007acc"      # classic blue link
+
         # Remove duplicate sources based on file path
         unique_sources = {}
         for citation in source_citations:
@@ -1639,18 +2117,32 @@ class EnterpriseApp(QWidget):
                     from PyQt6.QtCore import QUrl
                     path = Path(file_path).resolve()
                     url = QUrl.fromLocalFile(str(path))
-                    open_link = f"<a href='{url.toString()}' title='{path}' style='color: #007acc; text-decoration: none;'>Open</a>"
+                    open_link = f"<a href='{url.toString()}' title='{path}' style='color: {link_color}; text-decoration: none;'>Open</a>"
                 except:
                     open_link = "<span style='color: #666;'>Open</span>"
             else:
                 open_link = "<span style='color: #666;'>Open</span>"
             
+            # Convert to 1-based page numbering for display if numeric
+            try:
+                display_page = int(source_info['page']) + 1
+            except Exception:
+                display_page = source_info['page']
+
             # Clean format for customer support: [1] filename.pdf • page 12 • Open
-            source_text = f"[{i}] <span style='font-weight: bold; color: #2c3e50;'>{file_name}</span> • page {source_info['page']} • {open_link}"
+            source_text = (
+                f"[{i}] <span style='font-weight: 600; color: {filename_color};'>{file_name}</span> "
+                f"• page {display_page} • {open_link}"
+            )
             sources_html.append(source_text)
         
+        # Convert basic markdown in the answer portion only
+        answer_html = self._render_markdown_basic(answer)
         # Combine answer with beautifully formatted sources
-        formatted_answer = f"{answer}\n\n<b style='color: #34495e; font-size: 14px;'>Sources:</b><br>" + "<br>".join(sources_html)
+        formatted_answer = (
+            f"{answer_html}\n\n<span style='color: {label_color}; font-size: 14px; font-weight: 600;'>Sources:</span><br>"
+            + "<br>".join(sources_html)
+        )
         
         return formatted_answer
     
@@ -1663,9 +2155,28 @@ class EnterpriseApp(QWidget):
             else:
                 step_display = "<b>Thinking...</b><br><br>"
             
-            # Show partial answer if available
+            # Show partial answer if available — match final styling
             if result.answer:
-                answer_display = f"<b>Answer (Building...):</b><br><div style='white-space:pre-wrap; color: #2E8B57;'>{result.answer}</div>"
+                # Detect theme
+                app = QApplication.instance()
+                is_dark = False
+                if app:
+                    palette = app.palette()
+                    window_color = palette.color(palette.ColorRole.Window)
+                    brightness = window_color.red() * 0.299 + window_color.green() * 0.587 + window_color.blue() * 0.114
+                    is_dark = brightness < 128
+
+                if is_dark:
+                    answer_color = "#E6F4EA"
+                else:
+                    answer_color = "#0F5132"
+
+                font_size = "18px"
+                answer_display = (
+                    f"<div style='white-space:pre-wrap; color:{answer_color}; font-weight: normal; font-size:{font_size};'>"
+                    f"{self._render_markdown_basic(result.answer)}"
+                    f"</div>"
+                )
             else:
                 answer_display = "<i style='color: #666;'>Generating answer...</i>"
             
@@ -1702,12 +2213,84 @@ class EnterpriseApp(QWidget):
                 
                 # Show final answer
                 if result.answer:
-                    self.out.setHtml(f"<b>Final Answer:</b><br><div style='white-space:pre-wrap; color: #2E8B57; font-weight: bold;'>{result.answer}</div>")
+                    # Detect dark or light mode based on palette (simple heuristic)
+                    app = QApplication.instance()
+                    is_dark = False
+                    if app:
+                        palette = app.palette()
+                        window_color = palette.color(palette.ColorRole.Window)
+                        brightness = window_color.red() * 0.299 + window_color.green() * 0.587 + window_color.blue() * 0.114
+                        is_dark = brightness < 128  # basic YIQ brightness formula
+
+                    # Choose color palette (accessible contrast for readability)
+                    if is_dark:
+                        answer_color = "#E6F4EA"  # soft light green on dark backgrounds
+                        box_bg = "#0F172A"        # slate-900
+                        box_border = "#1F2937"    # slate-800
+                    else:
+                        answer_color = "#0F5132"  # deep green (Bootstrap success text)
+                        box_bg = "#F8FAFC"        # slate-50
+                        box_border = "#E5E7EB"    # gray-200
+
+                    font_size = "18px"
+
+                    # Ensure Sources section uses theme-aware colors and 1-based pages
+                    display_answer = result.answer
+                    try:
+                        import re
+                        idx = display_answer.lower().rfind("sources:")
+                        if idx != -1:
+                            head = display_answer[:idx]
+                            tail = display_answer[idx:]
+                            # Color remap within Sources block
+                            label_color = "#93C5FD" if is_dark else "#1F3A8A"
+                            filename_color = "#FFFFFF" if is_dark else "#2c3e50"
+                            link_color = "#60A5FA" if is_dark else "#007acc"
+                            # Replace the label element (often bold tag with fixed color)
+                            tail = re.sub(
+                                r"<b[^>]*color:\s*#34495e[^>]*>Sources:</b>",
+                                f"<span style='color: {label_color}; font-size: 14px; font-weight: 600;'>Sources:</span>",
+                                tail,
+                                flags=re.IGNORECASE,
+                            )
+                            # Filename color
+                            tail = re.sub(
+                                r"<span[^>]*font-weight:\s*(bold|600)[^>]*color:\s*#2c3e50[^>]*>",
+                                f"<span style='font-weight: 600; color: {filename_color};'>",
+                                tail,
+                                flags=re.IGNORECASE,
+                            )
+                            # Link color
+                            tail = re.sub(
+                                r"style='color:\s*#007acc;\s*text-decoration:\s*none;'",
+                                f"style='color: {link_color}; text-decoration: none;'",
+                                tail,
+                                flags=re.IGNORECASE,
+                            )
+                            tail = re.sub(
+                                r"(page)\s+(\d+)\b",
+                                lambda m: f"{m.group(1)} {int(m.group(2)) + 1}",
+                                tail,
+                                flags=re.IGNORECASE,
+                            )
+                            # Convert markdown in head (answer) only
+                            head_html = self._render_markdown_basic(head)
+                            display_answer = head_html + tail
+                    except Exception:
+                        pass
+
+                    self.out.setHtml(
+                        f"<div style='white-space:pre-wrap; color:{answer_color}; font-weight: normal; font-size:{font_size};"
+                        f" padding:12px 14px;"
+                        f" display:block; width:100%; box-sizing:border-box;'>"
+                        f"{display_answer}"
+                        f"</div>"
+                    )
                     # Auto-scroll to bottom for final answer
                     self.out.verticalScrollBar().setValue(self.out.verticalScrollBar().maximum())
-                
+
                 log_info(f"Streaming reasoning completed with confidence: {result.confidence_score:.2f}")
-                
+
         except Exception as e:
             log_error("Streaming Update Failed", e)
             self.out.setHtml(f"<b>Error:</b> {e}")
@@ -1731,6 +2314,10 @@ class EnterpriseApp(QWidget):
     def update_status(self, message: str):
         """Update status bar message"""
         self.status_label.setText(f"{datetime.now().strftime('%H:%M:%S')} - {message}")
+        # Apply theme-aware color
+        is_dark = self._is_dark_mode()
+        text_color = "#e0e0e0" if is_dark else "#2c3e50"
+        self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
         log_info(f"Status: {message}")
     
     # Index Management Methods
@@ -2032,7 +2619,8 @@ def main():
     
     # Create and show main window
     window = EnterpriseApp()
-    window.show()
+    # Show maximized to avoid geometry issues with taskbar and window decorations
+    window.showMaximized()
     
     # Log startup
     log_operation("Application Started", "Enterprise UI initialized")

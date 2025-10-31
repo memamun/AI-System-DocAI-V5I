@@ -81,7 +81,6 @@ class Indexer:
         device = "cpu"
 
         # Set environment variables for this process too
-        import os
         cache_dir = self.out_dir.parent / "cache" / "transformers"
         cache_dir.mkdir(parents=True, exist_ok=True)
         os.environ["TRANSFORMERS_CACHE"] = str(cache_dir)

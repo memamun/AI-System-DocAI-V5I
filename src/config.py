@@ -45,7 +45,12 @@ DEFAULT_CONFIG = {
         "model_type": "gpt-4o-mini",
         "context_length": 4096,
         "temperature": 0.7,
-        "max_tokens": 800,  # Match working project
+        # Advanced sampling/ctx options (used by Ollama and other local LLMs)
+        "top_p": 0.9,
+        "top_k": 40,
+        "repeat_penalty": 1.1,
+        "num_ctx": 8192,
+        "max_tokens": 2000,  # Match working project
         "threads": None,  # Auto-detect for CPU
         "gpu_layers": 0,
     },
@@ -73,7 +78,7 @@ DEFAULT_CONFIG = {
         "chunk_overlap": 50,  # Match indexing overlap
     },
     "reasoning": {
-        "max_tokens": 800,  # Match working project
+        "max_tokens": 2000,  # Match working project
         "temperature": 0.7,
         "use_streaming": True,
         "show_steps": True,
@@ -120,6 +125,10 @@ class LLMConfig:
     model_type: str
     context_length: int
     temperature: float
+    top_p: float
+    top_k: int
+    repeat_penalty: float
+    num_ctx: int
     max_tokens: int
     threads: Optional[int] = None
     gpu_layers: int = 0

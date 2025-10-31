@@ -373,6 +373,7 @@ class OllamaChat(BaseLLM):
         """Generate response using Ollama API"""
         try:
             import requests
+            from config import config_manager
             
             start_time = time.time()
             
@@ -386,7 +387,11 @@ class OllamaChat(BaseLLM):
                     "stream": False,
                     "options": {
                         "num_predict": max_tokens,
-                        "temperature": 0.7,
+                        "temperature": float(config_manager.config.llm.temperature),
+                        "top_p": float(config_manager.config.llm.top_p),
+                        "top_k": int(config_manager.config.llm.top_k),
+                        "repeat_penalty": float(config_manager.config.llm.repeat_penalty),
+                        "num_ctx": int(config_manager.config.llm.num_ctx),
                     }
                 },
                 timeout=60
@@ -404,6 +409,60 @@ class OllamaChat(BaseLLM):
         except Exception as e:
             logger.error(f"Ollama API generation failed: {e}")
             raise
+
+    def generate_stream(self, system: str, user: str, max_tokens: int = 600) -> Generator[str, None, None]:
+        """Stream response using Ollama API.
+        Uses the /api/generate endpoint with stream=true and yields incremental
+        tokens from line-delimited JSON payloads.
+        """
+        try:
+            import requests, json
+            from config import config_manager
+
+            prompt = f"{system}\n\n{user}"
+
+            with requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": True,
+                    "options": {
+                        "num_predict": max_tokens,
+                        "temperature": float(config_manager.config.llm.temperature),
+                        "top_p": float(config_manager.config.llm.top_p),
+                        "top_k": int(config_manager.config.llm.top_k),
+                        "repeat_penalty": float(config_manager.config.llm.repeat_penalty),
+                        "num_ctx": int(config_manager.config.llm.num_ctx),
+                    },
+                },
+                stream=True,
+                timeout=60,
+            ) as response:
+                if response.status_code != 200:
+                    raise RuntimeError(f"Ollama API error: {response.status_code}")
+
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line:
+                        continue
+                    try:
+                        data = json.loads(line)
+                    except Exception:
+                        continue
+
+                    # Emit incremental text if present
+                    text = data.get("response")
+                    if text:
+                        yield text
+
+                    if data.get("done") is True:
+                        break
+
+        except Exception as e:
+            logger.error(f"Ollama API streaming failed: {e}")
+            # Fallback to non-streaming
+            response = self.generate(system, user, max_tokens)
+            yield response
 
 class HFLocal(BaseLLM):
     """HuggingFace local model (CPU-only)"""

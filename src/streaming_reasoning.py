@@ -272,7 +272,13 @@ IMPORTANT:
         return ""
     
     def _extract_final_answer(self, response: str) -> str:
-        """Extract the final answer from complete response - uses synthesis step if FINAL ANSWER is incomplete"""
+        """Extract the final answer from complete response.
+        Preference order:
+        1) Explicit FINAL ANSWER section
+        2) STEP 4 - SYNTHESIS section (without other steps)
+        3) Assembled numbered/bulleted steps
+        4) Last substantial sentence
+        """
         lines = response.split('\n')
         
         # Look for FINAL ANSWER section first
@@ -302,39 +308,50 @@ IMPORTANT:
         # Check if we found a substantial FINAL ANSWER
         final_answer_text = '\n'.join(answer_lines).strip() if answer_lines else ""
         
-        # If FINAL ANSWER is too short or just a summary, look for detailed answer in SYNTHESIS step
-        if len(final_answer_text) < 200 or (final_answer_text and not any(c.isdigit() and '. ' in final_answer_text for c in final_answer_text)):
-            # Look for STEP 4 - SYNTHESIS which often has the detailed procedure
+        # If FINAL ANSWER is too short or missing, look for detailed answer in SYNTHESIS step
+        if len(final_answer_text) < 50:
             synthesis_started = False
-            synthesis_lines = []
-            
-            for line in lines:
+            synthesis_lines: list[str] = []
+
+            for idx, line in enumerate(lines):
                 stripped_line = line.strip()
-                
-                # Check for STEP 4 - SYNTHESIS
-                if re.match(r'STEP\s*4.*SYNTHESIS', stripped_line.upper()):
+
+                # Enter STEP 4 - SYNTHESIS region
+                if re.match(r'STEP\s*4\s*[-:]*\s*SYNTHESIS', stripped_line.upper()):
                     synthesis_started = True
                     continue
-                
-                # Stop at FINAL ANSWER or next major section
-                if synthesis_started and any(marker in stripped_line.upper() for marker in ['FINAL ANSWER:', 'STEP 5', 'ALTERNATIVE', '---END---']):
+
+                if not synthesis_started:
+                    continue
+
+                # Stop at the next major section marker
+                if any(marker in stripped_line.upper() for marker in ['FINAL ANSWER:', 'STEP 5', 'ALTERNATIVE', '---END---', 'SOURCES:']):
                     break
-                
-                # Collect synthesis content
-                if synthesis_started and stripped_line:
-                    # Look for the detailed answer that starts with "Putting this all together" or similar
-                    if any(phrase in stripped_line.lower() for phrase in ['putting this all together', 'the answer is as follows', 'to resolve', 'you can try the following']):
-                        # Found the detailed answer in synthesis - collect all from here
-                        synthesis_lines.append(stripped_line)
-                        # Collect rest of synthesis
-                        idx = lines.index(line)
-                        for remaining_line in lines[idx+1:]:
-                            remaining_stripped = remaining_line.strip()
-                            if any(marker in remaining_stripped.upper() for marker in ['FINAL ANSWER:', 'STEP 5', 'ALTERNATIVE', '---END---']):
-                                break
-                            if remaining_stripped:
-                                synthesis_lines.append(remaining_stripped)
-                        break
+
+                # Skip other step headers
+                if re.match(r'STEP\s*\d+', stripped_line.upper()):
+                    continue
+
+                if stripped_line:
+                    synthesis_lines.append(stripped_line)
+
+            # Clean synthesis: keep numbered/bulleted steps and meaningful sentences, drop repeats
+            if synthesis_lines:
+                cleaned = []
+                seen = set()
+                for s in synthesis_lines:
+                    # Ignore repeated prefaces like repeated login lines unless part of numbered steps
+                    key = s.lower()
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    # Remove leading bullets
+                    s = re.sub(r'^(?:-\s*|•\s*|\*\s*)', '', s)
+                    cleaned.append(s)
+
+                synthesis_text = '\n'.join(cleaned).strip()
+                if synthesis_text:
+                    return synthesis_text
             
             # If we found a detailed synthesis, use it
             synthesis_text = ' '.join(synthesis_lines).strip() if synthesis_lines else ""
@@ -345,7 +362,20 @@ IMPORTANT:
         if final_answer_text:
             return final_answer_text
         
-        # Fallback: use the last substantial sentence
+        # Fallback A: build a step-by-step list from numbered/bulleted lines in response
+        step_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if re.match(r"^\d+\.\s+", stripped) or re.match(r"^(?:-\s+|•\s+|\*\s+)", stripped) or stripped.lower().startswith("step "):
+                # Normalize bullets to plain text
+                normalized = re.sub(r"^(?:-\s+|•\s+|\*\s+)", "", stripped)
+                step_lines.append(normalized)
+        if len(step_lines) >= 2:
+            return "\n".join(step_lines)
+
+        # Fallback B: use the last substantial sentence
         for line in reversed(lines):
             line = line.strip()
             if (line and 
