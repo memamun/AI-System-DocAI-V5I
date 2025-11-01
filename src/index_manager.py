@@ -49,14 +49,20 @@ class IndexManager:
         self.index_dir = Path(self.config.get_index_path())
         self.index_dir.mkdir(parents=True, exist_ok=True)
         
-        # Initialize components
-        self.embedding_manager = EmbeddingManager()
+        # Initialize components (defer heavy initialization to speed up startup)
+        self.embedding_manager = None  # Will be initialized lazily when needed
         self.document_processor = DocumentProcessor()
         # Note: Retriever will be initialized when needed with specific index directory
         
         # Index metadata file
         self.metadata_file = self.index_dir / "index_metadata.json"
         self._load_metadata()
+    
+    def get_embedding_manager(self):
+        """Lazy initialization of embedding manager"""
+        if self.embedding_manager is None:
+            self.embedding_manager = EmbeddingManager()
+        return self.embedding_manager
     
     def _load_metadata(self):
         """Load index metadata from file"""
@@ -446,7 +452,7 @@ class IndexManager:
                 return False
             
             # Generate embeddings
-            embeddings = self.embedding_manager.embed_texts([chunk['text'] for chunk in all_chunks])
+            embeddings = self.get_embedding_manager().embed_texts([chunk['text'] for chunk in all_chunks])
             
             if embeddings is None or len(embeddings) == 0:
                 logger.error("Failed to generate embeddings")
@@ -488,7 +494,7 @@ class IndexManager:
                 'last_modified': current_time,
                 'document_count': len(documents),
                 'vector_count': len(all_chunks),
-                'embedding_model': self.embedding_manager.model_name,
+                'embedding_model': self.get_embedding_manager().model_name,
                 'chunk_size': self.config.config.retrieval.chunk_size,
                 'chunk_overlap': self.config.config.retrieval.chunk_overlap,
                 'documents': source_documents,

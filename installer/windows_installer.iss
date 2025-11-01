@@ -37,8 +37,6 @@ PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 SetupIconFile=..\assets\app-icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-; Create user data directory during install
-DefaultUserDataDir={localappdata}\{#MyAppName}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -49,11 +47,11 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 ; PyInstaller build output - all files from the build directory
 ; This includes: executable, DLLs, Python files, src/, assets/, etc.
-Source: "{#MyAppBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: PyInstallerBuildExists
+Source: "{#MyAppBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 ; Documentation files
-Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{src}\..\README.md'))
-Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion isreadme; Check: FileExists(ExpandConstant('{src}\..\LICENSE'))
+Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion isreadme
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
@@ -61,46 +59,11 @@ Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent shellexec; Check: PyInstallerBuildExists
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent shellexec
 
 [Code]
 var
-  PyInstallerBuildPath: String;
   UserDataDir: String;
-
-// Validate PyInstaller build exists before installer starts
-function InitializeSetup(): Boolean;
-begin
-  PyInstallerBuildPath := ExpandConstant('{src}\{#MyAppBuildDir}');
-  Result := DirExists(PyInstallerBuildPath);
-  
-  if not Result then
-  begin
-    MsgBox('PyInstaller build not found!' + #13#10 + #13#10 +
-           'Expected location: ' + PyInstallerBuildPath + #13#10 + #13#10 +
-           'Please build the application first:' + #13#10 +
-           '  pyinstaller --collect-all=PyQt6 AI-System-DocAI-V5I.spec',
-           mbError, MB_OK);
-  end
-  else
-  begin
-    // Check if main executable exists
-    if not FileExists(PyInstallerBuildPath + '\{#MyAppExeName}') then
-    begin
-      Result := False;
-      MsgBox('Main executable not found!' + #13#10 + #13#10 +
-             'Expected: ' + PyInstallerBuildPath + '\{#MyAppExeName}' + #13#10 + #13#10 +
-             'Please rebuild the application.',
-             mbError, MB_OK);
-    end;
-  end;
-end;
-
-// Check if PyInstaller build exists (called during file copying)
-function PyInstallerBuildExists(): Boolean;
-begin
-  Result := DirExists(ExpandConstant('{src}\{#MyAppBuildDir}'));
-end;
 
 // Create user data directory structure during installation
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -120,18 +83,15 @@ begin
     
     // Log installation
     SaveStringToFile(UserDataDir + '\logs\install.log',
-      Format('Installation completed: %s' + #13#10 +
-             'Installed to: %s' + #13#10 +
-             'User data: %s' + #13#10,
-             [GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':'),
-              ExpandConstant('{app}'),
-              UserDataDir]),
+      'Installation completed: ' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':') + #13#10 +
+      'Installed to: ' + ExpandConstant('{app}') + #13#10 +
+      'User data: ' + UserDataDir + #13#10,
       False);
   end;
 end;
 
 // Clean up on uninstall
-procedure CurUninstallStepChanged(CurUninstallStep: TUnUninstallStep);
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   UserDataDir: String;
   DeleteUserData: Integer;

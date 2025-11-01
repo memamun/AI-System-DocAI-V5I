@@ -59,3 +59,22 @@ dist/
 Thumbs.db
 desktop.ini
 
+#Release Files
+dist/
+release/
+AI-System-DocAI-V5I-5I.2025-Release.zip
+AI-System-DocAI-V5I-5I.2025-Release/
+            # LICENSE
+ignore them all
+
+# Downloaded Models
+models/
+    # downloaded_models.txt
+    # ignore it
+
+# Downloaded Embedding Models
+embedding_models/
+    # downloaded_embedding_models.txt
+    # ignore it
+
+# Downloaded Embedding Models   

@@ -20,10 +20,16 @@ if src_dir.exists():
         src_files.append((str(rel_path.parent), str(rel_path.parent)))
 
 # Analysis phase - collects all dependencies
+# Note: PyInstaller should automatically collect DLLs from .libs directories
 a = Analysis(
     ['main.py'],
     pathex=[],
-    binaries=[],
+    binaries=[
+        # FAISS DLLs that may not be auto-collected
+        ('.venv/Lib/site-packages/faiss_cpu.libs/libopenblas-e824cf9fc22e5949807ce995a32e413a.dll', 'faiss_cpu.libs'),
+        ('.venv/Lib/site-packages/faiss_cpu.libs/msvcp140-a4c2229bdc2a2a630acdc095b4d86008.dll', 'faiss_cpu.libs'),
+        ('.venv/Lib/site-packages/faiss_cpu.libs/vcomp140-55aba23cdcd6484fbb06f4155b8ca75a.dll', 'faiss_cpu.libs'),
+    ],
     datas=[
         ('src', 'src'),  # Include entire src directory
         ('assets', 'assets'),  # Include assets directory
@@ -117,8 +123,8 @@ a = Analysis(
         'streaming_reasoning',
         'streaming_reasoning_updated',
         'streaming_ui',
-        'app_qt',
-        'ingest',
+        # 'app_qt',  # Removed - not needed (old legacy module)
+        # 'ingest',  # Removed - modules in src/ are auto-detected
         
         # Standard library modules that might be missed
         'json',
@@ -142,11 +148,11 @@ a = Analysis(
         'notebook',
         'test',
         'pytest',
-        'unittest',
-        'pydoc',
+        # 'unittest',  # Don't exclude - transformers may need it
+        # 'pydoc',  # Don't exclude - some libraries may need it
         'tkinter',  # Not using Tkinter
         'tornado',  # Not used
-        'scipy',  # Not used (unless needed by transformers)
+        # 'scipy',  # Don't exclude - transformers/scikit-learn may need it
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

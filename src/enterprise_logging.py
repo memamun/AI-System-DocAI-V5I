@@ -22,11 +22,11 @@ class EnterpriseLogger:
         self.logs_dir = config_manager.get_logs_path()
         self.logs_dir.mkdir(parents=True, exist_ok=True)
         
-        # Setup logging
+        # Setup logging (always needed)
         self._setup_logging()
         
-        # Log startup information
-        self._log_startup_info()
+        # Log startup information - defer to avoid blocking UI initialization
+        # Will be called via _log_startup_info_deferred() after window is shown
     
     def _setup_logging(self):
         """Setup comprehensive logging configuration"""
@@ -142,6 +142,10 @@ class EnterpriseLogger:
             self.logger.info(f"  Backup Enabled: {config_manager.config.enterprise.backup_enabled}")
         
         self.logger.info("=" * 80)
+    
+    def _log_startup_info_deferred(self):
+        """Deferred startup info logging - call after UI is shown to avoid blocking"""
+        self._log_startup_info()
     
     def log_operation(self, operation: str, details: str = "", user: str = "system"):
         """Log an operation for audit purposes"""

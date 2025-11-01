@@ -522,8 +522,9 @@ class EnterpriseApp(QWidget):
         except Exception:
             pass
         
-        # Check if LLM needs to be configured (first startup)
-        self._check_and_prompt_llm_setup()
+        # Check if LLM needs to be configured (first startup) - AFTER window is shown
+        # Use single-shot timer to show dialog after window is visible
+        QTimer.singleShot(100, self._check_and_prompt_llm_setup)
     
     def _is_dark_mode(self):
         """Detect if the system/app is in dark mode"""
@@ -953,8 +954,8 @@ class EnterpriseApp(QWidget):
         
         layout.addWidget(summary_group)
         
-        # Load initial data
-        self.refresh_index_list()
+        # Load initial data - defer to background to avoid blocking UI
+        QTimer.singleShot(100, self.refresh_index_list)
         
         parent_tabs.addTab(management_widget, "Index Management")
     
@@ -1735,16 +1736,17 @@ class EnterpriseApp(QWidget):
             else:
                 self._save_llm_config(kind, name)
             
-            # Show appropriate message based on backend
-            if kind == "hf_local":
-                QMessageBox.information(
-                    self, "LLM Applied", 
-                    f"HuggingFace model configured: {model_id}\n\n"
-                    "The model will be downloaded automatically when you ask your first question.\n"
-                    "This may take several minutes depending on the model size."
-                )
-            else:
-                QMessageBox.information(self, "LLM", f"Applied: {self.llm.name}")
+            # Show appropriate message based on backend (skip if silent mode)
+            if not silent:
+                if kind == "hf_local":
+                    QMessageBox.information(
+                        self, "LLM Applied", 
+                        f"HuggingFace model configured: {model_id}\n\n"
+                        "The model will be downloaded automatically when you ask your first question.\n"
+                        "This may take several minutes depending on the model size."
+                    )
+                else:
+                    QMessageBox.information(self, "LLM", f"Applied: {self.llm.name}")
             
             log_operation("LLM Backend Applied", f"{kind}: {self.llm.name}")
             # Update status bar
@@ -1754,7 +1756,8 @@ class EnterpriseApp(QWidget):
                 self.update_ollama_connection_status()
             
         except Exception as e:
-            QMessageBox.warning(self, "LLM error", str(e))
+            if not silent:
+                QMessageBox.warning(self, "LLM error", str(e))
             self.llm = create_llm("none")
             log_error("LLM Application Failed", e)
     
@@ -2541,6 +2544,10 @@ def main():
     window = EnterpriseApp()
     # Show maximized to avoid geometry issues with taskbar and window decorations
     window.showMaximized()
+    
+    # Defer startup logging to background thread - don't block UI
+    from enterprise_logging import enterprise_logger
+    QTimer.singleShot(50, enterprise_logger._log_startup_info_deferred)
     
     # Log startup
     log_operation("Application Started", "Enterprise UI initialized")

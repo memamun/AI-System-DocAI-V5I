@@ -4,6 +4,7 @@ Handles persistent configuration, paths, and system configuration
 """
 from __future__ import annotations
 import os
+import sys
 import toml
 from pathlib import Path
 from dataclasses import dataclass, asdict
