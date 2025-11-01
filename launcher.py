@@ -113,10 +113,20 @@ def setup_logging():
         f.write(f"{'='*80}\n\n")
 
 def launch_application():
-    """Launch the main application"""
+    """Launch the main application - ALWAYS uses .venv"""
     print(f"🚀 Launching {APP_NAME}...")
     
+    # Always ensure we're using .venv
     python_path = get_venv_python()
+    
+    if not python_path.exists():
+        print(f"❌ Virtual environment Python not found at {python_path}")
+        print(f"   Please ensure .venv is properly set up")
+        return False
+    
+    # Verify we're using the venv Python
+    print(f"✅ Using Python from .venv: {python_path}")
+    
     main_script = Path(__file__).parent / "main.py"
     
     if not main_script.exists():
@@ -124,7 +134,7 @@ def launch_application():
         return False
     
     try:
-        # Run the application
+        # Run the application - ALWAYS using .venv Python
         result = subprocess.run(
             [str(python_path), str(main_script)],
             check=False
@@ -151,19 +161,25 @@ def main():
     # Check disk space
     check_disk_space()
     
-    # Check or create virtual environment
+    # ALWAYS ensure virtual environment exists and is used
     if not check_venv_exists():
-        print(f"Virtual environment not found")
+        print(f"⚠️  Virtual environment not found - creating .venv...")
         if not create_venv():
+            print(f"❌ Failed to create virtual environment")
+            print(f"   The application REQUIRES .venv to run")
             input("Press Enter to exit...")
             return 1
         
-        # Install dependencies
+        # Install dependencies in the newly created venv
+        print(f"📦 Installing dependencies in .venv...")
         if not install_dependencies():
+            print(f"❌ Failed to install dependencies")
             input("Press Enter to exit...")
             return 1
     else:
-        print(f"✅ Virtual environment found")
+        venv_python = get_venv_python()
+        print(f"✅ Virtual environment found at {get_venv_path()}")
+        print(f"✅ Will use Python: {venv_python}")
     
     # Launch application
     if not launch_application():

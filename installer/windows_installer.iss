@@ -1,11 +1,19 @@
 ; Inno Setup Script for AI-System-DocAI V5I
 ; Enterprise Edition Installer for Windows
+; NOTE: This installer expects a PyInstaller build in dist/AI-System-DocAI-V5I/
+; Build with: pyinstaller --collect-all=PyQt6 AI-System-DocAI-V5I.spec
+;
+; Prerequisites:
+; 1. PyInstaller build must be completed: pyinstaller AI-System-DocAI-V5I.spec
+; 2. Build output should be in: dist/AI-System-DocAI-V5I/
+; 3. Icon file should exist: assets/app-icon.ico
 
 #define MyAppName "AI-System-DocAI"
 #define MyAppVersion "5I.2025"
 #define MyAppPublisher "AI-System-Solutions"
 #define MyAppURL "https://github.com/ai-system-solutions/docai-v5i"
-#define MyAppExeName "launcher.bat"
+#define MyAppExeName "AI-System-DocAI-V5I.exe"
+#define MyAppBuildDir "..\dist\AI-System-DocAI-V5I"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application
@@ -18,14 +26,19 @@ AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
+AllowNoIcons=yes
+LicenseFile=..\LICENSE
 OutputDir=..\dist
 OutputBaseFilename=AI-System-DocAI-V5I-Setup
-Compression=lzma
+Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
 SetupIconFile=..\assets\app-icon.ico
-UninstallDisplayIcon={app}\assets\app-icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
+; Create user data directory during install
+DefaultUserDataDir={localappdata}\{#MyAppName}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -34,101 +47,112 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-; Application files
-Source: "..\main.py"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\launcher.py"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\launcher.bat"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\requirements.txt"; DestDir: "{app}"; Flags: ignoreversion
+; PyInstaller build output - all files from the build directory
+; This includes: executable, DLLs, Python files, src/, assets/, etc.
+Source: "{#MyAppBuildDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Check: PyInstallerBuildExists
 
-; Source files
-Source: "..\src\*"; DestDir: "{app}\src"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Assets
-Source: "..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Documentation
-Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion isreadme
+; Documentation files
+Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion; Check: FileExists(ExpandConstant('{src}\..\README.md'))
+Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion isreadme; Check: FileExists(ExpandConstant('{src}\..\LICENSE'))
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\app-icon.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\assets\app-icon.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent shellexec
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent shellexec; Check: PyInstallerBuildExists
 
 [Code]
-function InitializeSetup(): Boolean;
 var
-  PythonPath: String;
-  ResultCode: Integer;
+  PyInstallerBuildPath: String;
+  UserDataDir: String;
+
+// Validate PyInstaller build exists before installer starts
+function InitializeSetup(): Boolean;
 begin
-  Result := True;
+  PyInstallerBuildPath := ExpandConstant('{src}\{#MyAppBuildDir}');
+  Result := DirExists(PyInstallerBuildPath);
   
-  // Check for Python 3.8+
-  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Python\PythonCore\3.8\InstallPath', '', PythonPath) then
+  if not Result then
   begin
-    if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'Software\Python\PythonCore\3.8\InstallPath', '', PythonPath) then
+    MsgBox('PyInstaller build not found!' + #13#10 + #13#10 +
+           'Expected location: ' + PyInstallerBuildPath + #13#10 + #13#10 +
+           'Please build the application first:' + #13#10 +
+           '  pyinstaller --collect-all=PyQt6 AI-System-DocAI-V5I.spec',
+           mbError, MB_OK);
+  end
+  else
+  begin
+    // Check if main executable exists
+    if not FileExists(PyInstallerBuildPath + '\{#MyAppExeName}') then
     begin
-      if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Python\PythonCore\3.9\InstallPath', '', PythonPath) then
-      begin
-        if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'Software\Python\PythonCore\3.9\InstallPath', '', PythonPath) then
-        begin
-          if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Python\PythonCore\3.10\InstallPath', '', PythonPath) then
-          begin
-            if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'Software\Python\PythonCore\3.10\InstallPath', '', PythonPath) then
-            begin
-              if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Python\PythonCore\3.11\InstallPath', '', PythonPath) then
-              begin
-                if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'Software\Python\PythonCore\3.11\InstallPath', '', PythonPath) then
-                begin
-                  if not RegQueryStringValue(HKEY_CURRENT_USER, 'Software\Python\PythonCore\3.12\InstallPath', '', PythonPath) then
-                  begin
-                    if not RegQueryStringValue(HKEY_LOCAL_MACHINE, 'Software\Python\PythonCore\3.12\InstallPath', '', PythonPath) then
-                    begin
-                      if MsgBox('Python 3.8 or later is required but not found.' + #13#10 + #13#10 + 
-                                'Do you want to continue installation anyway?' + #13#10 + 
-                                '(You will need to install Python manually)', mbConfirmation, MB_YESNO) = IDNO then
-                      begin
-                        Result := False;
-                      end;
-                    end;
-                  end;
-                end;
-              end;
-            end;
-          end;
-        end;
-      end;
+      Result := False;
+      MsgBox('Main executable not found!' + #13#10 + #13#10 +
+             'Expected: ' + PyInstallerBuildPath + '\{#MyAppExeName}' + #13#10 + #13#10 +
+             'Please rebuild the application.',
+             mbError, MB_OK);
     end;
   end;
 end;
 
+// Check if PyInstaller build exists (called during file copying)
+function PyInstallerBuildExists(): Boolean;
+begin
+  Result := DirExists(ExpandConstant('{src}\{#MyAppBuildDir}'));
+end;
+
+// Create user data directory structure during installation
 procedure CurStepChanged(CurStep: TSetupStep);
-var
-  LogDir: String;
-  LogFile: String;
 begin
   if CurStep = ssPostInstall then
   begin
-    // Create logs directory
-    LogDir := ExpandConstant('{app}\logs');
-    if not DirExists(LogDir) then
-      CreateDir(LogDir);
+    // Create user data directories that the app will use
+    // Index, logs, cache will be created here instead of installation directory
+    UserDataDir := ExpandConstant('{localappdata}\{#MyAppName}');
     
-    // Create startup log
-    LogFile := LogDir + '\AI-System-DocAI_Startup.log';
-    SaveStringToFile(LogFile, '==============================================================================' + #13#10, False);
-    SaveStringToFile(LogFile, 'AI-System-DocAI V5I - Installed via Inno Setup' + #13#10, True);
-    SaveStringToFile(LogFile, 'Installation Date: ' + GetDateTimeString('yyyy-mm-dd hh:nn:ss', #0, #0) + #13#10, True);
-    SaveStringToFile(LogFile, '==============================================================================' + #13#10 + #13#10, True);
+    // Create directory structure (app will create subdirectories on first run)
+    CreateDir(UserDataDir);
+    CreateDir(UserDataDir + '\faiss_index');
+    CreateDir(UserDataDir + '\logs');
+    CreateDir(UserDataDir + '\cache');
+    CreateDir(UserDataDir + '\models');
     
-    // Create index and cache directories
-    if not DirExists(ExpandConstant('{app}\faiss_index')) then
-      CreateDir(ExpandConstant('{app}\faiss_index'));
-    if not DirExists(ExpandConstant('{app}\cache')) then
-      CreateDir(ExpandConstant('{app}\cache'));
+    // Log installation
+    SaveStringToFile(UserDataDir + '\logs\install.log',
+      Format('Installation completed: %s' + #13#10 +
+             'Installed to: %s' + #13#10 +
+             'User data: %s' + #13#10,
+             [GetDateTimeString('yyyy-mm-dd hh:nn:ss', '-', ':'),
+              ExpandConstant('{app}'),
+              UserDataDir]),
+      False);
+  end;
+end;
+
+// Clean up on uninstall
+procedure CurUninstallStepChanged(CurUninstallStep: TUnUninstallStep);
+var
+  UserDataDir: String;
+  DeleteUserData: Integer;
+begin
+  if CurUninstallStep = usUninstall then
+  begin
+    UserDataDir := ExpandConstant('{localappdata}\{#MyAppName}');
+    
+    // Ask if user wants to keep their data (indexes, logs, etc.)
+    DeleteUserData := MsgBox('Do you want to delete all user data (indexes, logs, cache)?' + #13#10 + #13#10 +
+                            'Location: ' + UserDataDir + #13#10 + #13#10 +
+                            'Click Yes to delete, No to keep the data.',
+                            mbConfirmation, MB_YESNO or MB_DEFBUTTON2);
+    
+    if DeleteUserData = IDYES then
+    begin
+      if DirExists(UserDataDir) then
+      begin
+        DelTree(UserDataDir, True, True, True);
+      end;
+    end;
   end;
 end;
 

@@ -26,6 +26,7 @@ class SourceCitation:
 @dataclass
 class ReasoningResult:
     """Structured reasoning result"""
+    question: str
     answer: str
     reasoning_chain: List[str]
     confidence_score: float
@@ -81,6 +82,9 @@ class ReasoningEngine:
             
             # Step 4: Parse and structure response
             result = self._parse_llm_response(llm_response, context, entities)
+            
+            # Add question to result
+            result.question = query
             
             # Step 5: Calculate confidence score
             confidence = self._calculate_confidence(result, context, entities)
@@ -260,6 +264,7 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
             answer = self._generate_answer_from_facts(supporting_facts, context)
         
         return ReasoningResult(
+            question="",  # Will be set by caller
             answer=answer,
             reasoning_chain=reasoning_chain,
             confidence_score=0.0,  # Will be calculated separately
@@ -1104,6 +1109,7 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
                               error: str, device_string: str) -> ReasoningResult:
         """Create fallback result when LLM fails"""
         return ReasoningResult(
+            question=query,
             answer=f"Unable to generate answer due to error: {error}",
             reasoning_chain=[
                 "1. Error occurred during LLM processing",
@@ -1139,6 +1145,7 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
         citations = [SourceCitation(**citation) for citation in data["source_citations"]]
         
         return ReasoningResult(
+            question=data.get("question", ""),
             answer=data["answer"],
             reasoning_chain=data["reasoning_chain"],
             confidence_score=data["confidence_score"],

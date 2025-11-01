@@ -14,7 +14,7 @@ AI-System-DocAI V5I is an **offline AI-assisted document reasoning system** desi
 - 🖥️ **CPU-Only Architecture**: No GPU required
 - 📄 **Multi-Format Support**: PDF, DOCX, TXT, XLSX, PPTX
 - 🔍 **Hybrid Search**: FAISS vector search + BM25 lexical search
-- 🤖 **Multiple LLM Backends**: OpenAI, Anthropic, Gemini, Ollama, HuggingFace, LlamaCpp
+- 🤖 **Multiple LLM Backends**: OpenAI, Ollama, HuggingFace
 - 💭 **Live Thinking Mode**: Real-time streaming of reasoning process
 - 📊 **Structured Reasoning**: JSON-formatted answers with citations and confidence scores
 - 🔒 **Enterprise Security**: Audit logging, IP filtering, rate limiting
@@ -219,7 +219,7 @@ iscc installer\windows_installer.iss
 ## 🎖️ Credits
 
 - Built with PyQt6, FAISS, SentenceTransformers
-- Uses various LLM APIs (OpenAI, Anthropic, Google, etc.)
+- Uses various LLM APIs (OpenAI, Ollama, HuggingFace)
 - Document processing: PyMuPDF, pypdf, docx2txt, python-pptx
 
 ## 📊 Version History

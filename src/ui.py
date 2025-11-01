@@ -804,20 +804,15 @@ class EnterpriseApp(QWidget):
         # Populate with available backends
         backends = get_available_backends()
         
-        # Simple backend display names (CPU-only)
+        # Simple backend display names
         backend_names = {
-            "none": "No LLM (Citations Only)",
             "openai": "OpenAI / Compatible API",
-            "anthropic": "Anthropic Claude",
-            "gemini": "Google Gemini",
             "ollama": "Ollama (Local Server)",
-            "hf_local": "HuggingFace Local",
-            "llama_cpp": "LlamaCpp (GGUF)"
+            "hf_local": "HuggingFace Local"
         }
         
         for backend in backends:
             display_name = backend_names.get(backend, backend)
-            display_name += " (CPU)"
             self.cbLLM.addItem(display_name, backend)
         
         self.cbLLM.currentIndexChanged.connect(self.on_backend_change)
@@ -997,15 +992,7 @@ class EnterpriseApp(QWidget):
                 is_dark = self._is_dark_mode()
                 text_color = "#e0e0e0" if is_dark else "#2c3e50"
                 self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
-            elif backend == "llama_cpp":
-                model = (config_manager.config.llm.model_path or "-")
-                text = f"LLM: LlamaCpp • {model}"
-                self.status_label.setText("Ready")
-                # Apply theme-aware color
-                is_dark = self._is_dark_mode()
-                text_color = "#e0e0e0" if is_dark else "#2c3e50"
-                self.status_label.setStyleSheet(f"color: {text_color}; font-weight: bold;")
-            elif backend in ("openai", "gemini", "anthropic"):
+            elif backend == "openai":
                 text = f"LLM: {backend}"
                 self.status_label.setText("Ready")
                 # Apply theme-aware color
@@ -1224,7 +1211,7 @@ class EnterpriseApp(QWidget):
         kind = self.cbLLM.currentData()
         
         # Enable/disable model name field based on backend
-        if kind in ["openai", "anthropic", "gemini"]:
+        if kind == "openai":
             self.eModelName.setEnabled(False)
         else:
             self.eModelName.setEnabled(True)
@@ -1670,16 +1657,10 @@ class EnterpriseApp(QWidget):
         
         if kind == "openai":
             self._configure_openai()
-        elif kind == "anthropic":
-            self._configure_anthropic()
-        elif kind == "gemini":
-            self._configure_gemini()
         elif kind == "ollama":
             self._configure_ollama()
         elif kind == "hf_local":
             self._configure_huggingface()
-        elif kind == "llama_cpp":
-            self._configure_llama_cpp()
         else:
             QMessageBox.information(
                 self, 
@@ -1698,29 +1679,7 @@ class EnterpriseApp(QWidget):
         name = self.eModelName.text().strip() or ""
         
         try:
-            if kind == "llama_cpp":
-                if name:
-                    # Use custom model path
-                    model_path = name
-                else:
-                    # Use default Mistral model
-                    models_dir = config_manager.get_model_path().parent
-                    model_path = models_dir / "mistral-7b-instruct-v0.1.Q4_K_M.gguf"
-                    if not model_path.exists():
-                        if not silent:
-                            QMessageBox.warning(
-                                self, "Model Not Found", 
-                                f"Mistral model not found at: {model_path}\n\n"
-                                "Please run setup_mistral.py to download the model, or\n"
-                                "specify a custom model path in the Model field."
-                            )
-                        # Fall back to "none"
-                        self.llm = create_llm("none")
-                        log_operation("LLM Backend Applied", "Fallback to 'none' - Mistral model not found")
-                        return
-                
-                self.llm = create_llm("llama_cpp", model_path=str(model_path))
-            elif kind == "openai":
+            if kind == "openai":
                 if not os.getenv("OPENAI_API_KEY"):
                     if not silent:
                         QMessageBox.information(
@@ -1733,40 +1692,6 @@ class EnterpriseApp(QWidget):
                     return
                 model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
                 self.llm = create_llm("openai", model=model)
-            elif kind == "anthropic":
-                if not os.getenv("ANTHROPIC_API_KEY"):
-                    if not silent:
-                        QMessageBox.information(
-                            self, "API Key Required", 
-                            "Anthropic API key not found. Please click 'Configure' to set your API key."
-                        )
-                    # Fall back to "none" instead of showing error
-                    self.llm = create_llm("none")
-                    log_operation("LLM Backend Applied", "Fallback to 'none' - Anthropic API key not found")
-                    return
-                model = os.getenv("ANTHROPIC_MODEL", "claude-3-haiku-20240307")
-                self.llm = create_llm("anthropic", model=model)
-            elif kind == "gemini":
-                if not os.getenv("GEMINI_API_KEY"):
-                    if not silent:
-                        QMessageBox.information(
-                            self, "API Key Required", 
-                            "Gemini API key not found. Please click 'Configure' to set your API key."
-                        )
-                    # Fall back to "none" instead of showing error
-                    self.llm = create_llm("none")
-                    log_operation("LLM Backend Applied", "Fallback to 'none' - Gemini API key not found")
-                    return
-                model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-                self.llm = create_llm("gemini", model=model)
-                # Show helpful message about Gemini safety filters
-                if not silent:
-                    QMessageBox.information(
-                        self, "Gemini Backend Applied", 
-                        "Gemini backend applied successfully!\n\n"
-                        "Note: Gemini has strict content safety policies. If you encounter safety filter blocks, "
-                        "try rephrasing your question or switch to a different LLM backend (OpenAI, Anthropic, or Ollama)."
-                    )
             elif kind == "ollama":
                 # Priority: UI field > config file > environment variables > defaults
                 # If UI field has value, use it; otherwise use config (which may have been loaded from env on first save)
@@ -1839,9 +1764,7 @@ class EnterpriseApp(QWidget):
             # Update config with new LLM settings
             config_manager.config.llm.backend = backend
             
-            if backend == "llama_cpp" and model_name:
-                config_manager.config.llm.model_path = model_name
-            elif backend in ["openai", "anthropic", "gemini"]:
+            if backend == "openai":
                 # For API backends, we don't need to save model path in config
                 # The model is determined by environment variables
                 pass
@@ -1893,10 +1816,7 @@ class EnterpriseApp(QWidget):
                     "You can configure:\n"
                     "• Ollama (Local Server)\n"
                     "• OpenAI / Compatible API\n"
-                    "• Anthropic Claude\n"
-                    "• Google Gemini\n"
-                    "• HuggingFace Local\n"
-                    "• LlamaCpp (GGUF)\n\n"
+                    "• HuggingFace Local\n\n"
                     "Click 'Yes' to configure, or 'No' to continue without an LLM (citations only).",
                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                     QMessageBox.StandardButton.Yes

@@ -140,9 +140,9 @@ python main.py
 
 ## Environment Variables
 
-### Required for Cloud LLM Backends
+### Required for OpenAI Backend
 
-Set these before launching if using cloud APIs:
+Set this before launching if using OpenAI API:
 
 #### OpenAI / OpenRouter
 ```bash
@@ -150,15 +150,7 @@ export OPENAI_API_KEY="your-api-key-here"
 export OPENAI_BASE_URL="https://api.openai.com/v1"  # Optional
 ```
 
-#### Anthropic Claude
-```bash
-export ANTHROPIC_API_KEY="your-api-key-here"
-```
-
-#### Google Gemini
-```bash
-export GEMINI_API_KEY="your-api-key-here"
-```
+**Note:** Ollama and HuggingFace run locally and don't require API keys.
 
 ### Windows
 Set via System Properties > Environment Variables or:
@@ -196,10 +188,10 @@ export OPENAI_API_KEY="your-api-key-here"
 ### Test Query
 
 1. Go to **Chat** tab
-2. Select "No LLM (Citations Only)" backend
+2. Select an LLM backend (Ollama recommended for testing)
 3. Click **Apply**
 4. Ask a question about your indexed documents
-5. Should return citations from relevant documents
+5. Should return answer with citations from relevant documents
 
 ## Troubleshooting
 

@@ -40,9 +40,9 @@ DEFAULT_CONFIG = {
         "config_dir": None,  # Will be set based on OS
     },
     "llm": {
-        "backend": "openai",  # openai, anthropic, gemini, ollama, hf_local, none
+        "backend": "ollama",  # openai, ollama, hf_local
         "model_path": "",
-        "model_type": "gpt-4o-mini",
+        "model_type": "mistral",
         "context_length": 4096,
         "temperature": 0.7,
         # Advanced sampling/ctx options (used by Ollama and other local LLMs)
@@ -120,7 +120,7 @@ class PathsConfig:
 
 @dataclass
 class LLMConfig:
-    backend: Literal["openai", "anthropic", "gemini", "ollama", "hf_local", "llama_cpp", "none"]
+    backend: Literal["openai", "ollama", "hf_local"]
     model_path: str
     model_type: str
     context_length: int
@@ -284,20 +284,56 @@ class ConfigManager:
             print(f"Error saving config: {e}")
     
     def get_index_path(self) -> Path:
-        """Get index directory path"""
-        return Path(self.config.paths.index_dir).resolve()
+        """Get index directory path - uses user directory when packaged"""
+        index_dir = self.config.paths.index_dir
+        # If running from PyInstaller, use user directory for data files
+        if getattr(sys, 'frozen', False) and not Path(index_dir).is_absolute():
+            # Use user's AppData/Local for Windows, ~/.local/share for Linux
+            if SYSTEM_INFO["os"] == "Windows":
+                base_path = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            else:
+                base_path = Path.home() / ".local" / "share"
+            return (base_path / "AI-System-DocAI" / "faiss_index").resolve()
+        return Path(index_dir).resolve()
     
     def get_logs_path(self) -> Path:
-        """Get logs directory path"""
-        return Path(self.config.paths.logs_dir).resolve()
+        """Get logs directory path - uses user directory when packaged"""
+        logs_dir = self.config.paths.logs_dir
+        # If running from PyInstaller, use user directory for logs
+        if getattr(sys, 'frozen', False) and not Path(logs_dir).is_absolute():
+            # Use user's AppData/Local for Windows, ~/.local/share for Linux
+            if SYSTEM_INFO["os"] == "Windows":
+                base_path = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            else:
+                base_path = Path.home() / ".local" / "share"
+            return (base_path / "AI-System-DocAI" / "logs").resolve()
+        return Path(logs_dir).resolve()
     
     def get_cache_path(self) -> Path:
-        """Get cache directory path"""
-        return Path(self.config.paths.cache_dir).resolve()
+        """Get cache directory path - uses user directory when packaged"""
+        cache_dir = self.config.paths.cache_dir
+        # If running from PyInstaller, use user directory for cache
+        if getattr(sys, 'frozen', False) and not Path(cache_dir).is_absolute():
+            # Use user's AppData/Local for Windows, ~/.cache for Linux
+            if SYSTEM_INFO["os"] == "Windows":
+                base_path = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            else:
+                base_path = Path.home() / ".cache"
+            return (base_path / "AI-System-DocAI").resolve()
+        return Path(cache_dir).resolve()
 
     def get_models_path(self) -> Path:
         """Get models directory path"""
-        return Path(self.config.paths.models_dir).resolve()
+        models_dir = self.config.paths.models_dir
+        # Models can stay in installation directory or user directory
+        if getattr(sys, 'frozen', False) and not Path(models_dir).is_absolute():
+            # Use user directory for downloaded models
+            if SYSTEM_INFO["os"] == "Windows":
+                base_path = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+            else:
+                base_path = Path.home() / ".local" / "share"
+            return (base_path / "AI-System-DocAI" / "models").resolve()
+        return Path(models_dir).resolve()
 
     def get_model_path(self) -> Path:
         """Get model path (alias for get_models_path)"""
@@ -352,25 +388,12 @@ INDEX_TYPES = [
     ("ivf", "FAISS IVF Flat (ANN, large datasets)"),
 ]
 
-# Check if llama-cpp is available
-try:
-    import llama_cpp
-    LLAMA_CPP_AVAILABLE = True
-except ImportError:
-    LLAMA_CPP_AVAILABLE = False
-
 # Build LLM backends based on availability
 LLM_BACKENDS = [
-    ("none", "No LLM (citations only)"),
     ("openai", "OpenAI / compatible"),
-    ("anthropic", "Anthropic Claude"),
-    ("gemini", "Google Gemini"),
     ("ollama", "Ollama (local server)"),
     ("hf_local", "Local HuggingFace"),
 ]
-
-if LLAMA_CPP_AVAILABLE:
-    LLM_BACKENDS.insert(1, ("llama_cpp", "Local LlamaCpp (GGUF)"))
 
 # Legacy DEFAULTS for backward compatibility
 DEFAULTS = {

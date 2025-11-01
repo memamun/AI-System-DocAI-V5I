@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class StreamingReasoningResult:
     """Streaming reasoning result with real-time updates"""
+    question: str = ""
     answer: str = ""
     reasoning_chain: List[str] = field(default_factory=list)
     confidence_score: float = 0.0
@@ -50,6 +51,7 @@ class StreamingReasoningEngine:
         if not context:
             logger.warning("No context provided for reasoning.")
             result = StreamingReasoningResult(
+                question=query,
                 answer="No relevant documents found to answer the query.",
                 reasoning_chain=["No document context was retrieved."],
                 confidence_score=0.0,
@@ -69,6 +71,7 @@ class StreamingReasoningEngine:
         try:
             # Initialize result
             result = StreamingReasoningResult(
+                question=query,
                 metadata={
                     "query_time_ms": 0,
                     "llm_backend": self.llm.name,
@@ -131,6 +134,7 @@ class StreamingReasoningEngine:
                 user_msg = f"Error: {error_msg}"
             
             result = StreamingReasoningResult(
+                question=query,
                 answer=user_msg,
                 reasoning_chain=[f"Configuration Error: {user_msg}"],
                 confidence_score=0.0,

@@ -1,6 +1,6 @@
 """
 Unified LLM Interface for AI-System-DocAI V5I (CPU-only)
-Supports OpenAI, Anthropic, Gemini, Ollama, HuggingFace, LlamaCpp, and NoLLM backends
+Supports OpenAI, Ollama, HuggingFace, and NoLLM backends
 """
 from __future__ import annotations
 import os
@@ -555,14 +555,8 @@ class NoLLM(BaseLLM):
 def create_llm(backend: str, **kwargs) -> BaseLLM:
     """Factory function to create LLM instances"""
     
-    if backend == "llama_cpp":
-        return LlamaCppLLM(**kwargs)
-    elif backend == "openai":
+    if backend == "openai":
         return OpenAIChat(**kwargs)
-    elif backend == "anthropic":
-        return AnthropicChat(**kwargs)
-    elif backend == "gemini":
-        return GeminiChat(**kwargs)
     elif backend == "ollama":
         return OllamaChat(**kwargs)
     elif backend == "hf_local":
@@ -574,13 +568,7 @@ def create_llm(backend: str, **kwargs) -> BaseLLM:
 
 def get_available_backends() -> List[str]:
     """Get list of available LLM backends"""
-    backends = ["none", "openai", "anthropic", "gemini", "ollama", "hf_local"]
-    
-    try:
-        import llama_cpp
-        backends.insert(1, "llama_cpp")
-    except ImportError:
-        pass
+    backends = ["openai", "ollama", "hf_local"]
     
     return backends
 
