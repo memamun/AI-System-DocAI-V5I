@@ -349,7 +349,7 @@ class GeminiChat(BaseLLM):
 class OllamaChat(BaseLLM):
     """Ollama local API client"""
     
-    def __init__(self, model: str = "llama2", base_url: str = "http://localhost:11434"):
+    def __init__(self, model: str = "llama2", base_url: str = "http://localhost:11434", skip_connection_test: bool = False):
         super().__init__()
         
         try:
@@ -360,14 +360,17 @@ class OllamaChat(BaseLLM):
         self.base_url = base_url.rstrip('/')
         self.model = model
         self.name = f"ollama:{model}"
+        self._connection_checked = False
         
-        # Test connection
-        try:
-            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
-            if response.status_code != 200:
-                raise RuntimeError(f"Ollama server not responding at {self.base_url}")
-        except requests.exceptions.RequestException as e:
-            raise RuntimeError(f"Cannot connect to Ollama server at {self.base_url}: {e}")
+        # Test connection only if not skipping (lazy check)
+        if not skip_connection_test:
+            try:
+                response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+                if response.status_code != 200:
+                    raise RuntimeError(f"Ollama server not responding at {self.base_url}")
+                self._connection_checked = True
+            except requests.exceptions.RequestException as e:
+                raise RuntimeError(f"Cannot connect to Ollama server at {self.base_url}: {e}")
     
     def generate(self, system: str, user: str, max_tokens: int = 600) -> str:
         """Generate response using Ollama API"""

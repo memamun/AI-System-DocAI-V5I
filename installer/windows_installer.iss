@@ -6,7 +6,7 @@
 ; Prerequisites:
 ; 1. PyInstaller build must be completed: pyinstaller AI-System-DocAI-V5I.spec
 ; 2. Build output should be in: dist/AI-System-DocAI-V5I/
-; 3. Icon file should exist: assets/app-icon.ico
+; 3. Icon file should exist: assets/app_icon.ico
 
 #define MyAppName "AI-System-DocAI"
 #define MyAppVersion "5I.2025"
@@ -35,7 +35,7 @@ SolidCompression=yes
 WizardStyle=modern
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
-SetupIconFile=..\assets\app-icon.ico
+SetupIconFile=..\assets\app_icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 
 [Languages]

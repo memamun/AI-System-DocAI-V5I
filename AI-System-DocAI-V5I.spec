@@ -183,7 +183,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/app-icon.ico',
+    icon='assets/app_icon.ico',
 )
 
 # For onedir mode (directory with executable + DLLs)
@@ -221,6 +221,6 @@ coll = COLLECT(
 #     target_arch=None,
 #     codesign_identity=None,
 #     entitlements_file=None,
-#     icon='assets/app-icon.ico',
+#     icon='assets/app_icon.ico',
 # )
 

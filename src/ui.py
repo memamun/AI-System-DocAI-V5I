@@ -17,7 +17,7 @@ from PyQt6.QtWidgets import (
     QTextEdit, QFileDialog, QProgressBar, QComboBox, QMessageBox, QLineEdit, QTextBrowser,
     QDialog, QFormLayout, QDialogButtonBox, QCheckBox, QGroupBox, QGridLayout,
     QSplitter, QTreeWidget, QTreeWidgetItem, QHeaderView, QScrollArea, QFrame,
-    QRadioButton, QSpinBox, QDoubleSpinBox
+    QRadioButton, QSpinBox, QDoubleSpinBox, QSplashScreen
 )
 from PyQt6.QtCore import QThread, pyqtSignal, QUrl, QTimer, Qt, QEvent
 from PyQt6.QtGui import QDesktopServices, QFont, QIcon, QSyntaxHighlighter, QTextCharFormat, QColor, QScreen
@@ -131,6 +131,45 @@ class IndexLoaderThread(QThread):
             self.loaded.emit(retriever)
         except Exception as e:
             self.error.emit(str(e))
+
+class LLMLoaderThread(QThread):
+    """Background thread for loading LLM without blocking UI"""
+    loaded = pyqtSignal(object)  # Emits LLM instance
+    error = pyqtSignal(str)
+    
+    def __init__(self, kind: str, name: str, **kwargs):
+        super().__init__()
+        self.kind = kind
+        self.name = name
+        self.kwargs = kwargs
+    
+    def run(self):
+        try:
+            from llm import create_llm
+            llm = create_llm(self.kind, **self.kwargs)
+            self.loaded.emit(llm)
+        except Exception as e:
+            self.error.emit(str(e))
+
+class OllamaConnectionChecker(QThread):
+    """Background thread for checking Ollama connectivity without blocking UI"""
+    status_checked = pyqtSignal(bool, str)  # connected, status_text
+    
+    def __init__(self, base_url: str):
+        super().__init__()
+        self.base_url = base_url
+    
+    def run(self):
+        try:
+            import requests
+            url = self.base_url.rstrip('/')
+            resp = requests.get(f"{url}/api/tags", timeout=3)
+            if resp.status_code == 200:
+                self.status_checked.emit(True, "Connected")
+            else:
+                self.status_checked.emit(False, "Disconnected")
+        except Exception as e:
+            self.status_checked.emit(False, "Disconnected")
 
 class AskThread(QThread):
     """Thread for asking questions and getting answers with reasoning."""
@@ -514,17 +553,22 @@ class EnterpriseApp(QWidget):
         self.setup_ui()
         self.setup_initial_state()
         
-        # Load saved LLM configuration
-        self._load_llm_config()
-        # Attempt to auto-apply saved LLM silently (useful for Ollama/local)
+        # Defer LLM loading to background - don't block startup
+        QTimer.singleShot(200, self._load_and_apply_llm_async)
+    
+    def _load_and_apply_llm_async(self):
+        """Load and apply LLM configuration asynchronously"""
         try:
-            self.apply_llm(silent=True)
-        except Exception:
-            pass
-        
-        # Check if LLM needs to be configured (first startup) - AFTER window is shown
-        # Use single-shot timer to show dialog after window is visible
-        QTimer.singleShot(100, self._check_and_prompt_llm_setup)
+            # Load saved LLM configuration
+            self._load_llm_config()
+            # Attempt to auto-apply saved LLM silently (useful for Ollama/local)
+            # Skip connection test to avoid blocking startup
+            try:
+                self.apply_llm(silent=True, skip_ollama_connection_test=True)
+            except Exception:
+                pass
+        except Exception as e:
+            log_error("Async LLM Load Failed", e)
     
     def _is_dark_mode(self):
         """Detect if the system/app is in dark mode"""
@@ -1016,29 +1060,31 @@ class EnterpriseApp(QWidget):
             self.llm_status_label.setText("LLM: —")
 
     def update_ollama_connection_status(self, base_url: str | None = None):
-        """Check Ollama connectivity via /api/tags and update status label."""
+        """Check Ollama connectivity via /api/tags and update status label in background."""
+        url = (base_url or config_manager.config.llm.model_path or "http://localhost:11434")
+        
+        # Check if already running
+        if hasattr(self, '_ollama_checker') and self._ollama_checker and self._ollama_checker.isRunning():
+            return  # Don't start another check if one is in progress
+        
+        # Create and start checker thread
+        self._ollama_checker = OllamaConnectionChecker(url)
+        self._ollama_checker.status_checked.connect(self._on_ollama_status_checked)
+        self._ollama_checker.start()
+    
+    def _on_ollama_status_checked(self, connected: bool, status_text: str):
+        """Update UI with Ollama connection status (called from background thread via signal)"""
         try:
-            import requests
-            url = (base_url or config_manager.config.llm.model_path or "http://localhost:11434").rstrip('/')
-            resp = requests.get(f"{url}/api/tags", timeout=3)
-            # Get theme-aware text color
             is_dark = self._is_dark_mode()
             text_color = "#e0e0e0" if is_dark else "#2c3e50"
             
-            if resp.status_code == 200:
-                # Green dot icon + Connected text with theme-aware color
+            if connected:
                 self.status_label.setText(f"<span style='color:#2ecc71'>&#9679;</span> <span style='color:{text_color}'>Connected</span>")
-                self.status_label.setStyleSheet("font-weight: bold;")
             else:
-                # Red dot icon + Disconnected text with theme-aware color
                 self.status_label.setText(f"<span style='color:#e74c3c'>&#9679;</span> <span style='color:{text_color}'>Disconnected</span>")
-                self.status_label.setStyleSheet("font-weight: bold;")
-        except Exception:
-            # Red dot icon + Disconnected text on error with theme-aware color
-            is_dark = self._is_dark_mode()
-            text_color = "#e0e0e0" if is_dark else "#2c3e50"
-            self.status_label.setText(f"<span style='color:#e74c3c'>&#9679;</span> <span style='color:{text_color}'>Disconnected</span>")
             self.status_label.setStyleSheet("font-weight: bold;")
+        except Exception:
+            pass  # Ignore errors in UI update
 
     def on_main_tab_changed(self, idx: int):
         """When user switches between main tabs (Main, Diagnostics), ensure status bar stays visible."""
@@ -1670,11 +1716,12 @@ class EnterpriseApp(QWidget):
                 f"Just set the model name/path and click Apply."
             )
 
-    def apply_llm(self, silent: bool = False):
+    def apply_llm(self, silent: bool = False, skip_ollama_connection_test: bool = False):
         """Apply LLM configuration
         
         Args:
             silent: If True, don't show warnings for missing API keys (useful during startup)
+            skip_ollama_connection_test: If True, skip Ollama connection test for faster startup
         """
         kind = self.cbLLM.currentData()
         name = self.eModelName.text().strip() or ""
@@ -1709,7 +1756,7 @@ class EnterpriseApp(QWidget):
                 # Ensure base_url doesn't have trailing slash issues
                 base_url = base_url.rstrip('/')
                 
-                self.llm = create_llm("ollama", model=model, base_url=base_url)
+                self.llm = create_llm("ollama", model=model, base_url=base_url, skip_connection_test=skip_ollama_connection_test)
                 
                 # If we used config values, update UI to show them
                 if not ui_model and config_manager.config.llm.model_type:
@@ -1751,9 +1798,9 @@ class EnterpriseApp(QWidget):
             log_operation("LLM Backend Applied", f"{kind}: {self.llm.name}")
             # Update status bar
             self.update_llm_status()
-            # If Ollama, re-check connectivity now
+            # If Ollama, re-check connectivity now - defer to avoid blocking
             if kind == "ollama":
-                self.update_ollama_connection_status()
+                QTimer.singleShot(300, lambda: self.update_ollama_connection_status())
             
         except Exception as e:
             if not silent:
@@ -1879,9 +1926,9 @@ class EnterpriseApp(QWidget):
             log_operation("LLM Config Loaded", f"Backend: {saved_backend}")
             # Update LLM status label from saved config
             self.update_llm_status()
-            # Initial Ollama connectivity probe if selected
+            # Initial Ollama connectivity probe if selected - defer to background
             if saved_backend == "ollama":
-                self.update_ollama_connection_status()
+                QTimer.singleShot(500, lambda: self.update_ollama_connection_status())
 
         except Exception as e:
             log_error("LLM Config Load Failed", e)
@@ -2533,16 +2580,18 @@ Size: {status.get('size_mb', 0)} MB"""
 
 def main():
     """Main application entry point"""
-    app = QApplication(sys.argv)
+    # Get existing QApplication or create new one
+    app = QApplication.instance()
+    if app is None:
+        app = QApplication(sys.argv)
+        app.setApplicationName("AI-System-DocAI V5I")
+        app.setApplicationVersion("5I.2025")
+        app.setOrganizationName("AI-System-Solutions")
     
-    # Set application properties
-    app.setApplicationName("AI-System-DocAI V5I")
-    app.setApplicationVersion("5I.2025")
-    app.setOrganizationName("AI-System-Solutions")
-    
-    # Create and show main window
+    # Create main window (this may take time)
     window = EnterpriseApp()
-    # Show maximized to avoid geometry issues with taskbar and window decorations
+    
+    # Show main window maximized
     window.showMaximized()
     
     # Defer startup logging to background thread - don't block UI

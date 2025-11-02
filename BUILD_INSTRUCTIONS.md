@@ -128,3 +128,22 @@ After building, verify:
 - [ ] Logs are created in user directory
 - [ ] No console errors (if console=False)
 
+## My Build commnads
+
+
+#clear first
+
+```
+if (Test-Path dist) { Remove-Item -Recurse -Force dist }; if (Test-Path build) { Remove-Item -Recurse -Force build }; Write-Host "Cleaned build directories" -ForegroundColor Green
+```
+
+#build now
+```
+if (Test-Path dist) { Remove-Item -Recurse -Force dist }; Write-Host "Starting build with silent LLM fix..." -ForegroundColor Green; .venv\Scripts\pyinstaller.exe AI-System-DocAI-V5I.spec 2>&1 | Select-String -Pattern "Build complete" | Select-Object -First 1
+```
+
+#installer creation
+```
+& "C:\Users\aamam\AppData\Local\Programs\Inno Setup 6\ISCC.exe" installer\windows_installer.iss; Write-Host "`nInstaller build complete!"                              
+```
+

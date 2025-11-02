@@ -8,6 +8,44 @@ import os
 import platform
 from pathlib import Path
 
+# Import minimal PyQt6 for splash screen BEFORE heavy imports
+try:
+    from PyQt6.QtWidgets import QApplication, QSplashScreen
+    from PyQt6.QtCore import Qt, QTimer, QObject, pyqtSignal
+    from PyQt6.QtGui import QColor
+    PYQT6_AVAILABLE = True
+except ImportError:
+    PYQT6_AVAILABLE = False
+
+class SplashUpdater(QObject):
+    """Updates splash screen with progress messages"""
+    progress_update = pyqtSignal(str)
+    
+    def __init__(self):
+        super().__init__()
+        self.current_step = 0
+        self.steps = [
+            "Loading core modules...",
+            "Initializing UI components...",
+            "Setting up application...",
+            "Almost ready...",
+        ]
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_progress)
+        self.timer.start(300)  # Update every 300ms
+    
+    def update_progress(self):
+        """Update splash message"""
+        if self.current_step < len(self.steps):
+            self.progress_update.emit(self.steps[self.current_step])
+            self.current_step += 1
+        else:
+            self.timer.stop()
+    
+    def stop(self):
+        """Stop progress updates"""
+        self.timer.stop()
+
 def ensure_venv_used():
     """Ensure we're using .venv if it exists (only when running from source)"""
     if getattr(sys, 'frozen', False):
@@ -93,12 +131,107 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 def main():
     """Main entry point"""
+    # Create app and splash screen IMMEDIATELY if possible
+    splash = None
+    if PYQT6_AVAILABLE:
+        app = QApplication(sys.argv)
+        app.setApplicationName("AI-System-DocAI V5I")
+        app.setApplicationVersion("5I.2025")
+        app.setOrganizationName("AI-System-Solutions")
+        
+        # Detect system theme (dark/light mode)
+        is_dark = False
+        try:
+            palette = app.palette()
+            window_color = palette.color(palette.ColorRole.Window)
+            brightness = window_color.red() * 0.299 + window_color.green() * 0.587 + window_color.blue() * 0.114
+            is_dark = brightness < 128
+        except:
+            pass  # Default to dark if detection fails
+        
+        # Create theme-aware splash screen
+        from PyQt6.QtGui import QPixmap
+        splash_pixmap = QPixmap(500, 350)
+        splash = QSplashScreen(splash_pixmap)
+        
+        # Theme-aware styling
+        if is_dark:
+            bg_gradient = "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #1e3a5f, stop:1 #0f2a3f)"
+            title_color = "white"
+            subtitle_color = "#64b5f6"
+            text_color = "#b0bec5"
+        else:
+            bg_gradient = "qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #e3f2fd, stop:1 #bbdefb)"
+            title_color = "#1565c0"
+            subtitle_color = "#1976d2"
+            text_color = "#424242"
+        
+        splash.setStyleSheet(f"""
+            QSplashScreen {{
+                background-color: {bg_gradient};
+            }}
+        """)
+        
+        # Initial splash text
+        splash_text = f"""
+            <div style='text-align: center; font-family: Segoe UI, Arial, sans-serif;'>
+                <h1 style='color: {title_color}; font-size: 32px; margin: 60px 0 10px 0; font-weight: bold;'>AI-System-DocAI</h1>
+                <h2 style='color: {subtitle_color}; font-size: 16px; margin: 0 0 40px 0;'>V5I.2025 - Enterprise Edition</h2>
+                <div style='width: 200px; height: 4px; background: rgba(0,0,0,0.1); margin: 30px auto; border-radius: 2px; overflow: hidden;'>
+                    <div style='width: 60%; height: 100%; background: {subtitle_color}; border-radius: 2px;'></div>
+                </div>
+                <p style='color: {text_color}; font-size: 13px; margin: 25px 0 0 0;' id='status'>Loading...</p>
+            </div>
+        """
+        splash.showMessage(splash_text, Qt.AlignmentFlag.AlignCenter, QColor(title_color))
+        splash.show()
+        app.processEvents()  # CRITICAL: Show splash immediately
+        
+        # Start interactive progress updates
+        splash_updater = SplashUpdater()
+        def update_splash_message(msg):
+            splash_text = f"""
+                <div style='text-align: center; font-family: Segoe UI, Arial, sans-serif;'>
+                    <h1 style='color: {title_color}; font-size: 32px; margin: 60px 0 10px 0; font-weight: bold;'>AI-System-DocAI</h1>
+                    <h2 style='color: {subtitle_color}; font-size: 16px; margin: 0 0 40px 0;'>V5I.2025 - Enterprise Edition</h2>
+                    <div style='width: 200px; height: 4px; background: rgba(0,0,0,0.1); margin: 30px auto; border-radius: 2px; overflow: hidden;'>
+                        <div style='width: 60%; height: 100%; background: {subtitle_color}; border-radius: 2px;'></div>
+                    </div>
+                    <p style='color: {text_color}; font-size: 13px; margin: 25px 0 0 0;'>{msg}</p>
+                </div>
+            """
+            splash.showMessage(splash_text, Qt.AlignmentFlag.AlignCenter, QColor(title_color))
+            app.processEvents()
+        
+        splash_updater.progress_update.connect(update_splash_message)
+    
     try:
-        # Import UI after path setup
-        from ui import main as ui_main
+        # Now import heavy UI modules (this takes time)
+        from ui import EnterpriseApp
+        from enterprise_logging import log_operation
+        from PyQt6.QtCore import QTimer
+        
+        # Create main window (this may take time)
+        window = EnterpriseApp()
+        
+        # Show main window maximized
+        window.showMaximized()
+        
+        # Close splash screen after main window is shown
+        if splash:
+            if 'splash_updater' in locals():
+                splash_updater.stop()
+            splash.close()
+        
+        # Defer startup logging to background thread - don't block UI
+        from enterprise_logging import enterprise_logger
+        QTimer.singleShot(50, enterprise_logger._log_startup_info_deferred)
+        
+        # Log startup
+        log_operation("Application Started", "Enterprise UI initialized")
         
         # Run the application
-        return ui_main()
+        return app.exec() if PYQT6_AVAILABLE else app.exec()
         
     except ImportError as e:
         error_msg = str(e)
