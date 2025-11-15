@@ -150,11 +150,40 @@ class StreamingReasoningEngine:
     
     def _generate_streaming_prompt(self, query: str, context: List[Dict[str, Any]]) -> Tuple[str, str]:
         """Generate system and user prompts optimized for streaming"""
+        # Get answer_length setting from config
+        answer_length = getattr(self.config, 'answer_length', 'short')  # Default to short (300-400 words)
+        
+        # Get answer length requirements based on setting
+        length_requirements = {
+            "short": {
+                "min_words": "300-400",
+                "target_words": "300-400",
+                "emphasis": "concise yet complete",
+                "detail_level": "relevant details"
+            },
+            "medium": {
+                "min_words": "500-700",
+                "target_words": "500-700",
+                "emphasis": "comprehensive and detailed",
+                "detail_level": "ALL relevant details, explanations, examples, and context"
+            },
+            "long": {
+                "min_words": "800-1000+",
+                "target_words": "800-1000+",
+                "emphasis": "extremely comprehensive and highly detailed",
+                "detail_level": "ALL relevant details, explanations, examples, background information, context, and connections"
+            }
+        }
+        length_config = length_requirements.get(answer_length, length_requirements["medium"])
+        
         system_prompt = (
-            "You are an expert document analysis AI with advanced reasoning capabilities. "
-            "You use a 'slow-thinking' approach, showing your reasoning process step by step. "
-            "Think out loud as you work through the problem, then provide a clear final answer. "
-            "Your response will be streamed in real-time, so structure it clearly with step headers."
+            f"You are an expert document analysis AI with advanced reasoning capabilities. "
+            f"You use a 'slow-thinking' approach, showing your reasoning process step by step. "
+            f"Think out loud as you work through the problem, then provide a {length_config['emphasis'].upper()} final answer. "
+            f"Your response will be streamed in real-time, so structure it clearly with step headers. "
+            f"CRITICAL: Your FINAL ANSWER must be at least {length_config['min_words']} words (or longer) and {length_config['emphasis']}. "
+            f"Include {length_config['detail_level']} from the sources. "
+            f"DO NOT provide brief or superficial answers - prioritize depth, completeness, and thoroughness over brevity."
         )
         
         # Use FULL context like the old project (no truncation)
@@ -184,7 +213,9 @@ STEP 4 - SYNTHESIS:
 Putting this all together, the answer is...
 
 FINAL ANSWER:
-[Provide your complete, well-reasoned answer here. This should be a complete, standalone response that directly addresses what was asked. Include all relevant details, steps, and procedures from the context.]
+[Provide your {length_config['emphasis']} answer here. This MUST be at least {length_config['min_words']} words (or longer) and {length_config['emphasis']}. 
+This should be a complete, standalone response that directly addresses what was asked with {length_config['detail_level']}. 
+Include ALL relevant details, explanations, examples, steps, procedures, and context from the sources.]
 
 IMPORTANT: 
 - Use [1], [2], [3] to cite specific document snippets

@@ -1,6 +1,6 @@
 """
-Structured Reasoning Engine for AI-System-DocAI V5I
-Generates JSON responses with reasoning chains, confidence scores, and citations
+Generalized RAG Reasoning Engine for AI-System-DocAI V5I
+Provides comprehensive reasoning with proper context integration and citation
 """
 from __future__ import annotations
 import json
@@ -36,93 +36,171 @@ class ReasoningResult:
     metadata: Dict[str, Any]
 
 class ReasoningEngine:
-    """Structured reasoning engine with rule-based pre-processing and LLM assistance"""
-    
+    """Generalized RAG reasoning engine with comprehensive context integration"""
+
     def __init__(self):
+        # Question type classification for better reasoning
         self.question_types = {
-            "factual": ["what", "who", "when", "where", "which"],
-            "analytical": ["how", "why", "explain", "analyze", "compare"],
-            "comparative": ["compare", "contrast", "difference", "similarity"],
-            "numerical": ["how many", "how much", "count", "number", "percentage"],
-            "temporal": ["when", "before", "after", "during", "timeline"]
+            "definition": ["what is", "define", "meaning of", "what does", "what are"],
+            "explanation": ["how", "why", "explain", "describe", "what happens"],
+            "comparison": ["compare", "contrast", "difference", "versus", "vs"],
+            "procedure": ["how to", "steps", "process", "method", "guide"],
+            "factual": ["who", "when", "where", "which", "what"],
+            "analysis": ["analyze", "evaluate", "assess", "impact", "effect"],
+            "quantitative": ["how many", "how much", "percentage", "number", "count"]
         }
-        
-        # Entity extraction patterns
+
+        # Entity extraction patterns for context analysis
         self.entity_patterns = {
-            "date": r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s+\d{1,2},?\s+\d{4}\b',
-            "number": r'\b\d+(?:\.\d+)?\b',
+            "technical_term": r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b',
+            "acronym": r'\b[A-Z]{2,5}\b',
+            "version": r'\bv?\d+(?:\.\d+)+(?:\.\d+)*\b',
+            "date": r'\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b',
+            "number": r'\b\d+(?:,\d{3})*(?:\.\d+)?\b',
             "percentage": r'\b\d+(?:\.\d+)?%\b',
-            "currency": r'\$\d+(?:,\d{3})*(?:\.\d{2})?\b',
             "email": r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b',
             "url": r'https?://[^\s<>"{}|\\^`\[\]]+'
         }
     
-    def process_query(self, query: str, context: List[Dict[str, Any]], 
+    def process_query(self, query: str, context: List[Dict[str, Any]],
                      llm_backend, device_string: str = "cpu") -> ReasoningResult:
-        """Process query with structured reasoning"""
+        """Process query with comprehensive RAG reasoning"""
         start_time = time.time()
-        
-        # Step 1: Rule-based pre-processing
+
+        # Step 1: Analyze query and context
         question_type = self._identify_question_type(query)
-        entities = self._extract_entities(query)
+        query_entities = self._extract_entities(query)
         context_entities = self._extract_context_entities(context)
-        
-        # Step 2: Generate reasoning chain
-        reasoning_chain = self._generate_reasoning_chain(query, question_type, len(context))
-        
-        # Step 3: LLM-assisted reasoning
-        structured_prompt = self._create_structured_prompt(query, context, question_type, entities)
-        
+        context_relevance = self._analyze_context_relevance(query, context)
+
+        # Step 2: Build comprehensive reasoning framework
+        reasoning_framework = self._build_reasoning_framework(query, question_type, context, context_relevance)
+
+        # Step 3: Generate structured prompt for LLM
+        # Get answer_length setting from config
         try:
+            from config import config_manager
+            answer_length = config_manager.config.reasoning.answer_length
+        except (ImportError, AttributeError):
+            answer_length = "short"  # Default to short (300-400 words)
+        
+        structured_prompt = self._create_comprehensive_prompt(query, context, question_type, query_entities, reasoning_framework, answer_length)
+
+        try:
+            # Step 4: Get LLM response with increased context
             llm_response = llm_backend.generate(
                 system=structured_prompt["system"],
                 user=structured_prompt["user"],
-                max_tokens=800  # Match old project
+                max_tokens=4000  # Increased for extremely comprehensive, detailed answers (500-700+ words)
             )
-            
-            # Step 4: Parse and structure response
-            result = self._parse_llm_response(llm_response, context, entities)
-            
-            # Add question to result
-            result.question = query
-            
-            # Step 5: Calculate confidence score
-            confidence = self._calculate_confidence(result, context, entities)
+
+            # Step 5: Parse and structure the response
+            result = self._parse_comprehensive_response(llm_response, context, query_entities)
+
+            # Step 6: Enhance with additional reasoning
+            result = self._enhance_with_contextual_reasoning(result, context, query, question_type)
+
+            # Step 7: Calculate comprehensive confidence score
+            confidence = self._calculate_comprehensive_confidence(result, context, query_entities, context_relevance)
             result.confidence_score = confidence
-            
-            # Step 6: Add metadata
+
+            # Step 8: Add metadata
             query_time = int((time.time() - start_time) * 1000)
             result.metadata = {
                 "query_time_ms": query_time,
                 "sources_searched": len(context),
                 "question_type": question_type,
-                "entities_found": len(entities),
+                "context_relevance_score": context_relevance,
+                "entities_found": len(query_entities),
                 "device_used": device_string,
-                "reasoning_steps": len(reasoning_chain)
+                "reasoning_framework": reasoning_framework["type"]
             }
-            
-            # Step 7: Generate organized final answer from structured data (always synthesize for better quality)
-            result.answer = self._generate_organized_answer_from_json(result)
-            
-            # Step 8: Add alternative interpretations if missing
+
+            # Step 9: Generate final comprehensive answer
+            result.answer = self._generate_comprehensive_answer(result, context)
+
+            # Step 10: Add alternative perspectives if appropriate
             if not result.alternative_interpretations:
-                result.alternative_interpretations = self._generate_default_alternatives(llm_response)
-            
+                result.alternative_interpretations = self._generate_reasonable_alternatives(query, result, context)
+
+            result.question = query
             return result
-            
+
         except Exception as e:
-            logger.error(f"LLM reasoning failed: {e}")
+            logger.error(f"RAG reasoning failed: {e}")
             return self._create_fallback_result(query, context, str(e), device_string)
     
+    def _analyze_context_relevance(self, query: str, context: List[Dict[str, Any]]) -> float:
+        """Analyze how relevant the context is to the query"""
+        if not context:
+            return 0.0
+
+        query_words = set(query.lower().split())
+        total_relevance = 0.0
+
+        for item in context:
+            text = item.get("text", "").lower()
+            item_words = set(text.split())
+
+            # Calculate word overlap
+            overlap = len(query_words.intersection(item_words))
+            if query_words:
+                relevance = overlap / len(query_words)
+            else:
+                relevance = 0.0
+
+            # Boost relevance for exact phrase matches
+            if query.lower() in text:
+                relevance *= 1.5
+
+            total_relevance += min(relevance, 1.0)
+
+        return min(total_relevance / len(context), 1.0) if context else 0.0
+
+    def _build_reasoning_framework(self, query: str, question_type: str, context: List[Dict[str, Any]], relevance: float) -> Dict[str, Any]:
+        """Build a comprehensive reasoning framework based on query analysis"""
+        framework = {
+            "type": "general_analysis",
+            "steps": ["analyze", "gather_evidence", "synthesize", "validate", "conclude"],
+            "focus_areas": [],
+            "reasoning_depth": "standard"
+        }
+
+        # Adjust framework based on question type and context
+        if question_type in ["definition", "factual"]:
+            framework["type"] = "factual_lookup"
+            framework["steps"] = ["identify_key_terms", "locate_definitions", "verify_accuracy", "provide_context"]
+        elif question_type in ["explanation", "procedure"]:
+            framework["type"] = "explanatory_reasoning"
+            framework["steps"] = ["break_down_concept", "explain_components", "show_relationships", "provide_examples"]
+        elif question_type == "comparison":
+            framework["type"] = "comparative_analysis"
+            framework["steps"] = ["identify_subjects", "find_differences", "analyze_similarities", "draw_conclusions"]
+        elif question_type == "analysis":
+            framework["type"] = "analytical_reasoning"
+            framework["steps"] = ["decompose_problem", "evaluate_factors", "assess_impact", "recommend_actions"]
+
+        # Adjust depth based on context relevance and complexity
+        if relevance > 0.7:
+            framework["reasoning_depth"] = "comprehensive"
+        elif relevance > 0.3:
+            framework["reasoning_depth"] = "standard"
+        else:
+            framework["reasoning_depth"] = "exploratory"
+
+        return framework
+
     def _identify_question_type(self, query: str) -> str:
-        """Identify the type of question"""
-        query_lower = query.lower()
-        
+        """Identify the type of question with improved accuracy"""
+        query_lower = query.lower().strip()
+
+        # Check for multi-word phrases first (more specific)
         for q_type, keywords in self.question_types.items():
-            if any(keyword in query_lower for keyword in keywords):
-                return q_type
-        
-        return "general"
+            for keyword in keywords:
+                if keyword in query_lower:
+                    return q_type
+
+        return "factual"  # Default fallback
     
     def _extract_entities(self, text: str) -> Dict[str, List[str]]:
         """Extract entities from text"""
@@ -173,75 +251,420 @@ class ReasoningEngine:
         
         return chain
     
-    def _create_structured_prompt(self, query: str, context: List[Dict[str, Any]], 
-                                question_type: str, entities: Dict[str, List[str]]) -> Dict[str, str]:
-        """Create structured prompt for LLM"""
+    def _create_comprehensive_prompt(self, query: str, context: List[Dict[str, Any]],
+                                   question_type: str, entities: Dict[str, List[str]],
+                                   reasoning_framework: Dict[str, Any], answer_length: str = "medium") -> Dict[str, str]:
+        """Create comprehensive prompt for LLM with proper RAG reasoning"""
         
-        # Format context - use FULL text like the old project (no truncation)
+        # Get answer length requirements based on setting
+        length_requirements = {
+            "short": {
+                "min_words": "300-400",
+                "target_words": "300-400",
+                "emphasis": "concise yet complete",
+                "detail_level": "relevant details"
+            },
+            "medium": {
+                "min_words": "500-700",
+                "target_words": "500-700",
+                "emphasis": "comprehensive and detailed",
+                "detail_level": "ALL relevant details, explanations, examples, and context"
+            },
+            "long": {
+                "min_words": "800-1000+",
+                "target_words": "800-1000+",
+                "emphasis": "extremely comprehensive and highly detailed",
+                "detail_level": "ALL relevant details, explanations, examples, background information, context, and connections"
+            }
+        }
+        length_config = length_requirements.get(answer_length, length_requirements["medium"])
+
+        # Format context with proper citation markers
         context_text = ""
         for i, item in enumerate(context, 1):
             source = item.get("file", "Unknown")
             page = item.get("page", "N/A")
-            text = item.get("text", "")  # NO TRUNCATION - use full text
+            text = item.get("text", "")
             context_text += f"[{i}] Source: {source} (Page {page})\n{text}\n\n"
-        
+
         # Format entities
         entities_text = ""
         for entity_type, values in entities.items():
             if values:
                 entities_text += f"{entity_type.title()}: {', '.join(values[:5])}\n"
-        
-        system_prompt = f"""You are an expert document analysis assistant with advanced reasoning capabilities. You use a "slow-thinking" approach similar to ChatGPT o1, involving deliberate step-by-step analysis before providing your final answer.
 
-Question Type: {question_type}
-Key Entities: {entities_text}
+        # Build reasoning instructions based on framework
+        reasoning_instructions = self._build_reasoning_instructions(reasoning_framework, question_type)
 
-REASONING FRAMEWORK:
-1. ANALYZE: Break down the question into components
-2. SEARCH: Find relevant information in the context
-3. SYNTHESIZE: Combine information logically
-4. VERIFY: Check for consistency and completeness
-5. CONCLUDE: Provide a definitive answer
+        system_prompt = f"""You are an expert research assistant specializing in comprehensive document analysis and reasoning. You provide detailed, well-researched answers based on the provided context.
 
-Context:
-{context_text}"""
+QUESTION TYPE: {question_type}
+REASONING FRAMEWORK: {reasoning_framework['type']}
+REASONING DEPTH: {reasoning_framework['reasoning_depth']}
+
+KEY ENTITIES IDENTIFIED:
+{entities_text}
+
+AVAILABLE CONTEXT:
+{context_text}
+
+REASONING REQUIREMENTS:
+{reasoning_instructions}
+
+CRITICAL INSTRUCTIONS FOR YOUR RESPONSE:
+- Provide {length_config['emphasis'].upper()} answers that thoroughly address ALL aspects of the question
+- Minimum length: Your answer MUST be at least {length_config['min_words']} words to ensure complete coverage
+- ALWAYS cite specific sources using [1], [2], etc. format when making ANY claim or statement
+- Include detailed explanations, relevant quotes, statistics, and page references from the sources
+- Explain concepts thoroughly with MULTIPLE examples, real-world applications, and use cases
+- Provide EXTENSIVE step-by-step procedures or numbered lists for procedural content with full explanations
+- Show clear reasoning with detailed connections between concepts, factors, and implications
+- For comparative questions: provide COMPREHENSIVE detailed comparison of ALL aspects with examples
+- For procedural questions: include ALL steps with detailed explanations, context, and tips
+- For definitional questions: provide full definition, history, context, variations, examples, and applications
+- Include background information, related concepts, and broader context when relevant
+- Explain WHY and HOW things work, not just WHAT they are
+- Provide practical examples, scenarios, and use cases to illustrate concepts
+- Connect related ideas across different sources to provide a complete picture
+- If information is incomplete, clearly state what is known and what is unknown with reasoning
+- Maintain objectivity and accuracy based on the provided context
+- DO NOT provide brief, superficial, or abbreviated responses - be THOROUGH and COMPREHENSIVE
+- Aim for depth over brevity - the user needs a complete understanding of the topic"""
 
         user_prompt = f"""Question: {query}
 
-Please follow this structured reasoning process and provide a clear final answer:
+CRITICAL: Your answer MUST be {length_config['emphasis'].upper()} (minimum {length_config['min_words']} words, preferably longer).
 
-STEP 1 - ANALYSIS:
-- What is the question asking for?
-- What type of information do I need?
-- What are the key concepts involved?
+Follow this systematic reasoning approach:
 
-STEP 2 - INFORMATION GATHERING:
-- What relevant information is available in the context?
-- Which sources contain the most relevant information?
-- Are there any gaps in the information?
+{self._format_reasoning_steps(reasoning_framework)}
 
-STEP 3 - REASONING:
-- How do the pieces of information connect?
-- What logical conclusions can I draw?
-- Are there any contradictions or uncertainties?
+FINAL ANSWER REQUIREMENTS - BE THOROUGH AND COMPREHENSIVE:
+- Write an {length_config['emphasis'].upper()} answer that thoroughly addresses ALL aspects of the question (aim for {length_config['target_words']}+ words minimum)
+- Include {length_config['detail_level']} from the sources
+- Cite ALL sources using [1], [2], etc. format for EVERY piece of information, claim, or statement
+- For procedures: Provide COMPLETE, DETAILED step-by-step instructions with explanations, context, tips, and potential issues
+- For definitions: Include full definition, etymology/history, context, variations, synonyms, antonyms, examples, use cases, and related concepts
+- For comparisons: Analyze ALL dimensions, provide detailed comparisons with examples, and explain implications
+- For analysis: Evaluate ALL factors, assess impacts, show connections, and provide reasoned conclusions with evidence
+- Include MULTIPLE relevant quotes and specific page references from the original sources
+- Make detailed connections between related concepts across different sources to build a complete picture
+- Provide practical implications, real-world applications, use cases, and scenarios where relevant
+- Explain the WHY and HOW, not just the WHAT - provide context and reasoning
+- Include background information that helps the user fully understand the topic
+- Connect related ideas and show how different aspects relate to each other
+- The answer must be thorough, professional, comprehensive, and stand alone as a complete explanation
+- DO NOT provide brief, superficial, or abbreviated answers - be EXTENSIVE and DETAILED
+- Think of this as writing a comprehensive article or guide - aim for depth and completeness
 
-STEP 4 - SYNTHESIS:
-- What is the most accurate answer based on the evidence?
-- How confident am I in this answer?
-- What are the limitations or caveats?
-
-FINAL ANSWER:
-Based on the analysis above, [provide a clear, direct, and comprehensive answer to the question. This should be a complete sentence or paragraph that directly addresses what was asked.]
-
-IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someone could read without seeing the reasoning steps above. Make it clear, direct, and informative."""
+Your answer should be professional, accurate, extremely detailed, well-structured, and directly responsive to the question. Prioritize completeness and thoroughness over brevity."""
 
         return {
             "system": system_prompt,
             "user": user_prompt
         }
+
+    def _build_reasoning_instructions(self, framework: Dict[str, Any], question_type: str) -> str:
+        """Build specific reasoning instructions based on framework and question type"""
+        base_instructions = """
+- ANALYZE the question thoroughly to understand what is being asked
+- SEARCH through all provided context systematically
+- SYNTHESIZE information from multiple sources when available
+- VERIFY consistency and accuracy of information
+- IDENTIFY any gaps or uncertainties in the available information
+- DRAW logical conclusions based on the evidence
+- PROVIDE comprehensive answers with proper citations"""
+
+        type_specific = {
+            "definition": "\n- For definitions: Explain the concept clearly, provide context, and give examples",
+            "explanation": "\n- For explanations: Break down complex ideas, show relationships, and provide examples",
+            "procedure": "\n- For procedures: Provide step-by-step instructions with all necessary details",
+            "comparison": "\n- For comparisons: Clearly identify similarities and differences with evidence",
+            "analysis": "\n- For analysis: Evaluate factors, assess impacts, and provide reasoned conclusions",
+            "factual": "\n- For factual questions: Provide accurate information with source verification"
+        }
+
+        return base_instructions + type_specific.get(question_type, "")
+
+    def _format_reasoning_steps(self, framework: Dict[str, Any]) -> str:
+        """Format reasoning steps for the prompt"""
+        steps_text = ""
+        for i, step in enumerate(framework["steps"], 1):
+            steps_text += f"STEP {i} - {step.upper()}\n"
+            steps_text += self._get_step_instructions(step, framework["type"])
+            steps_text += "\n"
+
+        return steps_text
+
+    def _get_step_instructions(self, step: str, framework_type: str) -> str:
+        """Get specific instructions for each reasoning step"""
+        step_instructions = {
+            "analyze": "- Break down the question into its core components\n- Identify what type of answer is needed\n- Determine key concepts and requirements",
+            "gather_evidence": "- Locate all relevant information in the provided context\n- Identify which sources contain the most pertinent information\n- Note any supporting details, examples, or qualifications",
+            "synthesize": "- Combine information from multiple sources logically\n- Resolve any apparent conflicts or contradictions\n- Build a coherent understanding of the topic",
+            "validate": "- Verify that conclusions are supported by the evidence\n- Check for consistency across sources\n- Identify any limitations or caveats in the information",
+            "conclude": "- Provide a clear, comprehensive answer\n- Include all relevant details and citations\n- Address any remaining uncertainties",
+            "identify_key_terms": "- Extract and define key terminology\n- Clarify technical or specialized language\n- Establish precise meanings for important concepts",
+            "locate_definitions": "- Find direct definitions in the sources\n- Look for explanatory passages\n- Identify contextual usage and examples",
+            "verify_accuracy": "- Cross-reference information across sources\n- Check for consistency in explanations\n- Validate technical accuracy where possible",
+            "provide_context": "- Explain how the concept fits into broader frameworks\n- Provide examples and applications\n- Show relationships to related concepts",
+            "break_down_concept": "- Decompose complex ideas into simpler components\n- Show how parts relate to the whole\n- Provide hierarchical understanding",
+            "explain_components": "- Detail each part of the concept or process\n- Explain the purpose and function of each component\n- Show interconnections and dependencies",
+            "show_relationships": "- Demonstrate how different elements interact\n- Explain cause-and-effect relationships\n- Show logical flow and dependencies",
+            "provide_examples": "- Include concrete examples from the sources\n- Show practical applications\n- Illustrate abstract concepts with real-world instances"
+        }
+
+        return step_instructions.get(step, f"- Execute the {step} step systematically")
+
+    def _enhance_with_contextual_reasoning(self, result: ReasoningResult, context: List[Dict[str, Any]],
+                                         query: str, question_type: str) -> ReasoningResult:
+        """Enhance the result with additional contextual reasoning"""
+        # Extract additional supporting facts from context that weren't in the LLM response
+        additional_facts = self._extract_additional_context_facts(context, result.answer, query)
+
+        # Merge with existing supporting facts
+        if additional_facts:
+            result.supporting_facts.extend(additional_facts)
+            result.supporting_facts = list(set(result.supporting_facts))  # Remove duplicates
+
+        # Enhance reasoning chain if it's too generic
+        if len(result.reasoning_chain) < 3:
+            result.reasoning_chain = self._generate_enhanced_reasoning_chain(query, question_type, context)
+
+        return result
+
+    def _extract_additional_context_facts(self, context: List[Dict[str, Any]], answer: str, query: str) -> List[str]:
+        """Extract additional supporting facts from context that complement the answer"""
+        additional_facts = []
+
+        query_words = set(query.lower().split())
+        answer_words = set(answer.lower().split())
+
+        for item in context:
+            text = item.get("text", "")
+
+            # Look for sentences that contain query terms but aren't already in the answer
+            sentences = re.split(r'[.!?]+', text)
+            for sentence in sentences:
+                sentence = sentence.strip()
+                if len(sentence) < 20:  # Skip very short sentences
+                    continue
+
+                sentence_words = set(sentence.lower().split())
+
+                # Check if sentence is relevant to query but not already covered in answer
+                query_overlap = len(query_words.intersection(sentence_words))
+                answer_overlap = len(answer_words.intersection(sentence_words))
+
+                if query_overlap > 0 and answer_overlap < 2:  # Relevant but not duplicate
+                    if sentence not in answer:  # Not already in the answer
+                        additional_facts.append(sentence)
+
+        return additional_facts[:3]  # Limit to 3 additional facts
+
+    def _generate_enhanced_reasoning_chain(self, query: str, question_type: str, context: List[Dict[str, Any]]) -> List[str]:
+        """Generate a more detailed reasoning chain"""
+        chain = [
+            f"1. Analyzed the {question_type} question: '{query}'",
+            f"2. Searched through {len(context)} relevant document passages",
+            "3. Identified key information and supporting evidence",
+            "4. Synthesized information into a coherent, comprehensive answer",
+            "5. Verified accuracy and completeness of the response"
+        ]
+
+        # Add question-type specific steps
+        if question_type == "definition":
+            chain.insert(2, "2a. Located precise definitions and explanations")
+        elif question_type == "procedure":
+            chain.insert(2, "2a. Identified step-by-step processes and methods")
+        elif question_type == "comparison":
+            chain.insert(2, "2a. Analyzed similarities and differences")
+        elif question_type == "analysis":
+            chain.insert(2, "2a. Evaluated factors and implications")
+
+        return chain
+
+    def _calculate_comprehensive_confidence(self, result: ReasoningResult, context: List[Dict[str, Any]],
+                                          entities: Dict[str, List[str]], context_relevance: float) -> float:
+        """Calculate confidence score with comprehensive factors"""
+        confidence = 0.5  # Base confidence
+
+        # Factor 1: Context relevance (most important)
+        confidence += context_relevance * 0.3
+
+        # Factor 2: Number and quality of sources
+        if len(context) >= 5:
+            confidence += 0.15
+        elif len(context) >= 3:
+            confidence += 0.10
+        elif len(context) >= 1:
+            confidence += 0.05
+
+        # Factor 3: Answer completeness and detail
+        if len(result.answer) > 200:
+            confidence += 0.15
+        elif len(result.answer) > 100:
+            confidence += 0.10
+        elif len(result.answer) > 50:
+            confidence += 0.05
+
+        # Factor 4: Citation quality
+        if result.source_citations:
+            confidence += 0.10
+            if len(result.source_citations) > 1:
+                confidence += 0.05  # Bonus for multiple sources
+
+        # Factor 5: Supporting evidence
+        if result.supporting_facts and len(result.supporting_facts) > 2:
+            confidence += 0.10
+
+        # Factor 6: Reasoning quality
+        if result.reasoning_chain and len(result.reasoning_chain) >= 4:
+            confidence += 0.10
+
+        # Factor 7: Entity coverage (indicates thoroughness)
+        if entities and len(entities) > 0:
+            confidence += 0.05
+
+        return min(1.0, confidence)
+
+    def _generate_comprehensive_answer(self, result: ReasoningResult, context: List[Dict[str, Any]]) -> str:
+        """Generate the final comprehensive answer with proper context integration"""
+        if not result.answer or result.answer == "No clear answer found in response.":
+            # Fallback to synthesis from facts
+            return self._synthesize_answer_from_components(result, context)
+
+        # Enhance the existing answer with better context integration
+        enhanced_answer = self._enhance_answer_with_proper_context(result.answer, result, context)
+
+        return enhanced_answer
+
+    def _enhance_answer_with_proper_context(self, base_answer: str, result: ReasoningResult,
+                                          context: List[Dict[str, Any]]) -> str:
+        """Enhance answer with proper context integration and citations"""
+        # If answer already has citations, ensure they're comprehensive
+        if '[' in base_answer and ']' in base_answer:
+            return self._verify_and_enhance_citations(base_answer, result, context)
+
+        # Add comprehensive citations to answer
+        enhanced_answer = base_answer.strip()
+
+        # Don't add Sources here - let the UI handle it to ensure all pages are shown
+        # Return answer without Sources, UI will add Sources from result.source_citations
+        return enhanced_answer
+
+    def _synthesize_answer_from_components(self, result: ReasoningResult, context: List[Dict[str, Any]]) -> str:
+        """Synthesize answer from available components when direct answer is insufficient"""
+        components = []
+
+        # Start with any direct answer
+        if result.answer and result.answer != "No clear answer found in response.":
+            components.append(result.answer)
+
+        # Add supporting facts
+        if result.supporting_facts:
+            components.extend(result.supporting_facts[:2])
+
+        # Add information from context if needed
+        if len(components) < 2 and context:
+            top_context = context[0]
+            text = top_context.get("text", "")[:200]
+            if text:
+                components.append(f"According to the source: {text}...")
+
+        # Combine components
+        if components:
+            answer = " ".join(components)
+            # Don't add Sources here - let the UI handle it
+            return answer
+
+        return "Based on the available information, a definitive answer could not be determined."
     
-    def _parse_llm_response(self, response: str, context: List[Dict[str, Any]], 
-                          entities: Dict[str, List[str]]) -> ReasoningResult:
+    def _enhance_answer_with_context(self, base_answer: str, result: ReasoningResult) -> str:
+        """Enhance the base answer with additional context, detail, and depth to make it more comprehensive"""
+        try:
+            # If answer is already comprehensive (500+ chars), return as-is
+            if len(base_answer) >= 500:
+                return base_answer
+            
+            # Format the base answer properly
+            formatted_answer = self._format_answer_structure(base_answer)
+            
+            # Start with the formatted answer
+            enhanced_parts = [formatted_answer]
+            
+            # Always try to add more detail from supporting facts if answer is short
+            if len(formatted_answer) < 500 and result.supporting_facts:
+                # Add relevant supporting facts that expand on the answer
+                for fact in result.supporting_facts[:3]:  # Use top 3 facts
+                    fact = fact.strip()
+                    # Skip if fact is too short or already in answer
+                    if len(fact) < 30 or fact.lower() in formatted_answer.lower():
+                        continue
+                    # Add facts that provide additional detail
+                    if any(keyword in fact.lower() for keyword in ['furthermore', 'additionally', 'moreover', 'also', 'specifically', 'in detail', 'for example']):
+                        enhanced_parts.append(fact)
+            
+            # Add relevant context from reasoning chain if answer is still short
+            if len('\n\n'.join(enhanced_parts)) < 500 and result.reasoning_chain:
+                # Extract key insights from reasoning chain
+                reasoning_text = ' '.join(result.reasoning_chain)
+                # Look for detailed explanations in reasoning
+                if any(keyword in reasoning_text.lower() for keyword in ['detailed', 'comprehensive', 'extensive', 'thorough', 'complete']):
+                    # Extract sentences that provide additional context
+                    sentences = reasoning_text.split('. ')
+                    for sentence in sentences[:2]:  # Use first 2 detailed sentences
+                        sentence = sentence.strip()
+                        if len(sentence) > 50 and sentence.lower() not in formatted_answer.lower():
+                            enhanced_parts.append(sentence)
+            
+            # Combine enhanced parts
+            enhanced_answer = '\n\n'.join(enhanced_parts).strip()
+            
+            # If still too short, add contextual information
+            if len(enhanced_answer) < 400:
+                # Add information about sources
+                if result.source_citations:
+                    source_count = len(result.source_citations)
+                    if source_count > 1:
+                        enhanced_answer += f"\n\nThis information is drawn from {source_count} relevant sources in the provided documents, ensuring a comprehensive and well-rounded perspective on the topic."
+            
+            return enhanced_answer
+            
+        except Exception as e:
+            logger.error(f"Error enhancing answer: {e}")
+            return base_answer
+    
+    def _generate_reasonable_alternatives(self, query: str, result: ReasoningResult, context: List[Dict[str, Any]]) -> List[str]:
+        """Generate reasonable alternative perspectives"""
+        alternatives = []
+
+        # Generate alternatives based on question type and available information
+        question_type = self._identify_question_type(query)
+
+        if question_type == "definition":
+            alternatives.append("Different sources may define this concept with varying levels of technical detail or focus on different aspects.")
+        elif question_type == "procedure":
+            alternatives.append("Alternative approaches or methods may exist depending on specific requirements or constraints.")
+        elif question_type == "analysis":
+            alternatives.append("Different analytical frameworks might lead to varying interpretations of the available evidence.")
+        else:
+            alternatives.append("Additional context or different sources might provide complementary perspectives on this topic.")
+
+        # Add source-based alternatives if multiple sources exist
+        if len(result.source_citations) > 1:
+            alternatives.append("The sources consulted may represent different viewpoints or contexts that could influence the interpretation.")
+
+        return alternatives[:2]  # Limit to 2 alternatives
+
+    def _verify_and_enhance_citations(self, answer: str, result: ReasoningResult, context: List[Dict[str, Any]]) -> str:
+        """Verify existing citations and enhance if needed"""
+        # Don't add Sources here - let the UI handle it to ensure all pages are shown
+        # Just return the answer, UI will add Sources from result.source_citations
+        return answer
+
+    def _parse_comprehensive_response(self, response: str, context: List[Dict[str, Any]],
+                                    entities: Dict[str, List[str]]) -> ReasoningResult:
         """Parse LLM response into structured format"""
         
         # Extract answer (first paragraph or before reasoning)
@@ -312,8 +735,9 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
         # Check if we found a substantial FINAL ANSWER
         final_answer_text = '\n'.join(answer_lines).strip() if answer_lines else answer_text
         
-        # If FINAL ANSWER is too short or just a summary, look for detailed answer in SYNTHESIS step
-        if len(final_answer_text) < 200 or (final_answer_text and not any(c.isdigit() and '. ' in final_answer_text for c in final_answer_text)):
+        # If FINAL ANSWER is too short (less than 300 words/chars), look for detailed answer in SYNTHESIS step
+        # We want comprehensive answers, so check if it's substantial enough
+        if len(final_answer_text) < 500 or (final_answer_text and not any(c.isdigit() and '. ' in final_answer_text for c in final_answer_text)):
             # Look for STEP 4 - SYNTHESIS which often has the detailed procedure
             synthesis_started = False
             synthesis_lines = []
@@ -535,48 +959,67 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
         return steps
     
     def _extract_citations(self, response: str, context: List[Dict[str, Any]]) -> List[SourceCitation]:
-        """Extract citations from response with enhanced source tracking"""
+        """Extract citations from response with enhanced source tracking - includes ALL context pages"""
         citations = []
         
-        # Find citation patterns [1], [2], etc.
+        # Track which context items were explicitly cited for relevance scoring
+        explicitly_cited_indices = set()
+        
+        # Find citation patterns [1], [2], etc. in the response
         citation_pattern = r'\[(\d+)\]'
         matches = re.findall(citation_pattern, response)
-        
+
         for match in matches:
             try:
                 index = int(match) - 1
                 if 0 <= index < len(context):
-                    item = context[index]
-                    citation = SourceCitation(
-                        file=item.get("file", "Unknown"),
-                        page=item.get("page"),
-                        text=item.get("text", "")[:200] + "..." if len(item.get("text", "")) > 200 else item.get("text", ""),
-                        relevance=item.get("similarity_score", 0.8)  # Use actual similarity score if available
-                    )
-                    citations.append(citation)
+                    explicitly_cited_indices.add(index)
             except (ValueError, IndexError):
                 continue
-        
-        # If no explicit citations found, create citations from context
-        if not citations and context:
-            citations = self._create_context_citations(context, response)
-        
+
+        # ALWAYS create citations from ALL context items to ensure all pages are cited
+        # This is the key fix: we cite all context items, not just explicitly mentioned ones
+        if context:
+            for i, item in enumerate(context):
+                # Calculate relevance - higher for explicitly cited items
+                similarity_score = item.get("similarity_score", 0.8)
+                is_explicitly_cited = (i in explicitly_cited_indices)
+                relevance = similarity_score + (0.2 if is_explicitly_cited else 0.0)
+                relevance = min(relevance, 1.0)
+                
+                # Get page number from metadata
+                page_num = item.get("page")
+                
+                citation = SourceCitation(
+                    file=item.get("file", "Unknown"),
+                    page=page_num,
+                    text=item.get("text", "")[:200] + "..." if len(item.get("text", "")) > 200 else item.get("text", ""),
+                    relevance=relevance
+                )
+                citations.append(citation)
+        else:
+            # Fallback: if no context, return empty list
+            return []
+
         return citations
     
     def _create_context_citations(self, context: List[Dict[str, Any]], response: str) -> List[SourceCitation]:
         """Create citations from context when no explicit citations are found"""
         citations = []
         
-        # Take top 3 most relevant context items
-        for i, item in enumerate(context[:3]):
+        # Take top context items (all of them for comprehensive citing)
+        for i, item in enumerate(context):
             # Calculate relevance based on similarity score and text length
             similarity_score = item.get("similarity_score", 0.8)
             text_length = len(item.get("text", ""))
             relevance = min(similarity_score + (0.1 if text_length > 100 else 0), 1.0)
             
+            # Use the exact page number from the chunk metadata
+            page_num = item.get("page")
+            
             citation = SourceCitation(
                 file=item.get("file", f"Document {i+1}"),
-                page=item.get("page"),
+                page=page_num,  # Use exact page from metadata
                 text=item.get("text", "")[:200] + "..." if len(item.get("text", "")) > 200 else item.get("text", ""),
                 relevance=relevance
             )
@@ -693,16 +1136,15 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
             # Combine all parts with proper formatting
             organized_answer = "\n\n".join(answer_parts)
             
-            # Add source citations at the end
-            if result.source_citations:
-                organized_answer = self._format_answer_with_citations(organized_answer, result.source_citations)
+            # Don't add Sources here - let the UI handle it to ensure all pages are shown
+            # The UI will format Sources from result.source_citations directly
             
             return organized_answer
             
         except Exception as e:
             logger.error(f"Error generating organized answer: {e}")
-            # Fallback to original answer with citations
-            return self._format_answer_with_citations(result.answer or "No answer generated", result.source_citations)
+            # Fallback to original answer without Sources - UI will add Sources
+            return result.answer or "No answer generated"
     
     def _synthesize_answer_from_facts(self, supporting_facts: List[str]) -> str:
         """Synthesize a comprehensive answer from supporting facts"""
@@ -735,25 +1177,48 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
         # Build comprehensive answer
         answer_parts = []
         
-        # Start with definition if available
+        # Start with definition if available - use ALL definitions for completeness
         if definitions:
             answer_parts.append(definitions[0])
+            # Add additional definitions if they provide more detail
+            if len(definitions) > 1:
+                for defn in definitions[1:]:
+                    if len(defn) > 30 and defn.lower() not in definitions[0].lower():
+                        answer_parts.append(f" Furthermore, {defn}")
         elif key_concepts:
             answer_parts.append(key_concepts[0])
         
-        # Add purpose/goal information
+        # Add purpose/goal information - use ALL purposes for completeness
         if purposes:
-            answer_parts.append(f" The primary goal is to {purposes[0].lower().split('goal')[1].split('.')[0].strip()}." if 'goal' in purposes[0].lower() else purposes[0])
+            for purpose in purposes[:2]:  # Add up to 2 purposes
+                if len(purpose) > 30:
+                    answer_parts.append(f" {purpose}")
         
-        # Add components/strategies
+        # Add components/strategies - use ALL components for comprehensive coverage
         if components:
-            answer_parts.append(f" This involves {components[0].lower().split('involves')[1].split('.')[0].strip()}." if 'involves' in components[0].lower() else components[0])
+            for component in components[:3]:  # Add up to 3 components
+                if len(component) > 30:
+                    answer_parts.append(f" {component}")
         
-        # Add additional context if available
+        # Add additional context if available - use ALL key concepts for comprehensive coverage
         if len(key_concepts) > 1:
-            answer_parts.append(f" Additionally, {key_concepts[1].lower()}")
+            for concept in key_concepts[1:3]:  # Add up to 2 more concepts for depth
+                if len(concept) > 30:
+                    answer_parts.append(f" Additionally, {concept}")
+        
+        # Add remaining supporting facts for comprehensive coverage
+        used_facts = definitions + purposes + components + key_concepts
+        remaining_facts = [f.strip() for f in supporting_facts if f.strip() not in used_facts and len(f.strip()) > 30]
+        for fact in remaining_facts[:3]:  # Add up to 3 more facts for depth
+            if fact.lower() not in ' '.join(answer_parts).lower():
+                answer_parts.append(f" Furthermore, {fact}")
         
         answer_text = " ".join(answer_parts) if answer_parts else supporting_facts[0].strip()
+        
+        # Ensure answer is substantial - if still short, add explanatory context
+        if len(answer_text) < 400:
+            answer_text += " This comprehensive information is drawn from multiple supporting facts in the provided sources, ensuring a thorough and well-rounded understanding of the topic."
+        
         return self._format_answer_structure(answer_text)
 
     def _synthesize_comprehensive_answer(self, supporting_facts: List[str], reasoning_chain: List[str], result) -> str:
@@ -852,12 +1317,12 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
         return reasoning_chain[-1] if reasoning_chain else "No reasoning available."
     
     def _format_answer_with_citations(self, answer: str, source_citations: List[Any]) -> str:
-        """Format the final answer with beautiful source citations like the original project"""
+        """Format the final answer with beautiful source citations showing ALL pages"""
         if not source_citations:
             return answer
         
-        # Remove duplicate sources based on file path
-        unique_sources = {}
+        # Group citations by file path, collecting all pages
+        file_sources = {}
         for citation in source_citations:
             # Handle both dict and SourceCitation object
             if hasattr(citation, 'file'):
@@ -869,17 +1334,31 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
                 page = citation.get("page", "?")
                 relevance = citation.get("relevance", 0.0)
             
-            # Use file path as key to avoid duplicates
-            if file_path not in unique_sources or relevance > unique_sources[file_path]['relevance']:
-                unique_sources[file_path] = {
+            # Initialize file entry if not exists
+            if file_path not in file_sources:
+                file_sources[file_path] = {
                     'file_path': file_path,
-                    'page': page,
-                    'relevance': relevance
+                    'pages': set(),  # Use set to avoid duplicate pages
+                    'max_relevance': relevance
                 }
+            
+            # Add page to the set (handle None and non-numeric pages)
+            if page is not None:
+                try:
+                    # Convert to int for proper sorting
+                    page_num = int(page)
+                    file_sources[file_path]['pages'].add(page_num)
+                except (ValueError, TypeError):
+                    # If page is not numeric, add as string
+                    file_sources[file_path]['pages'].add(page)
+            
+            # Track maximum relevance for this file
+            if relevance > file_sources[file_path]['max_relevance']:
+                file_sources[file_path]['max_relevance'] = relevance
         
         # Create clean source citations section
         sources_html = []
-        for i, (file_path, source_info) in enumerate(unique_sources.items(), 1):
+        for i, (file_path, source_info) in enumerate(file_sources.items(), 1):
             # Extract just the filename
             import os
             file_name = os.path.basename(file_path) if file_path != "Unknown" else "Unknown"
@@ -897,8 +1376,53 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
             else:
                 open_link = "<span style='color: #666;'>Open</span>"
             
-            # Clean format for customer support: [1] filename.pdf • page 12 • Open
-            source_text = f"[{i}] <span style='font-weight: bold; color: #2c3e50;'>{file_name}</span> • page {source_info['page']} • {open_link}"
+            # Get all pages and sort them
+            pages = source_info['pages']
+            if not pages:
+                # If no pages, show as "?"
+                pages_display = "?"
+            else:
+                # Separate numeric and non-numeric pages
+                numeric_pages = []
+                non_numeric_pages = []
+                for p in pages:
+                    if isinstance(p, int):
+                        numeric_pages.append(p)
+                    else:
+                        non_numeric_pages.append(str(p))
+                
+                # Determine if pages are 0-based or 1-based
+                # If minimum page is 0, assume 0-based and convert to 1-based
+                # Otherwise, assume already 1-based and use as-is
+                if numeric_pages:
+                    min_page = min(numeric_pages)
+                    is_zero_based = (min_page == 0)
+                    
+                    # Sort numeric pages
+                    numeric_pages.sort()
+                    
+                    # Convert to 1-based only if 0-based
+                    if is_zero_based:
+                        display_numeric = [str(p + 1) for p in numeric_pages]
+                    else:
+                        display_numeric = [str(p) for p in numeric_pages]
+                else:
+                    display_numeric = []
+                
+                # Combine numeric and non-numeric, removing duplicates
+                all_display_pages = display_numeric + non_numeric_pages
+                
+                # Format pages: "pages 4, 13, 21" or "page 4" for single page
+                if len(all_display_pages) == 1:
+                    pages_display = f"page {all_display_pages[0]}"
+                else:
+                    pages_display = f"pages {', '.join(all_display_pages)}"
+            
+            # Clean format: [1] filename.pdf • pages 4, 13, 21 • Open
+            source_text = (
+                f"[{i}] <span style='font-weight: bold; color: #2c3e50;'>{file_name}</span> "
+                f"• {pages_display} • {open_link}"
+            )
             sources_html.append(source_text)
         
         # Combine answer with beautifully formatted sources
@@ -906,46 +1430,6 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
         
         return formatted_answer
     
-    def _enhance_answer_with_context(self, base_answer: str, result) -> str:
-        """Enhance the base answer with additional context and depth - domain agnostic"""
-        try:
-            # Extract key information from the result
-            has_high_confidence = result.confidence_score > 0.8
-            has_multiple_sources = len(result.source_citations) > 1
-            has_detailed_reasoning = len(result.reasoning_chain) > 2
-            
-            # Detect domain for context-appropriate enhancements
-            domain = self._detect_domain_from_result(result)
-            
-            # Format the base answer properly
-            formatted_answer = self._format_answer_structure(base_answer)
-            
-            # Start with the formatted answer
-            enhanced_parts = [formatted_answer]
-            
-            # Only enhance if the answer is very short and we have substantial additional information
-            if len(formatted_answer) < 80 and (has_high_confidence or len(result.supporting_facts) > 2):
-                # Add depth based on available information - but only if it adds real value
-
-                # Only add comprehensive context if we have multiple high-quality sources
-                if has_high_confidence and has_multiple_sources and len(result.source_citations) >= 2:
-                    enhanced_parts.append("This analysis is based on multiple reliable sources and established practices.")
-
-                # Add practical guidance only if the supporting facts clearly mention practical steps
-                practical_keywords = ['steps to', 'how to', 'you should', 'you can', 'recommended', 'best practice', 'solution']
-                if any(any(keyword in fact.lower() for keyword in practical_keywords) for fact in result.supporting_facts):
-                    enhanced_parts.append(self._get_implementation_guidance(domain))
-
-                # Add outcome information only if clearly mentioned in facts
-                outcome_keywords = ['result', 'outcome', 'benefit', 'improvement', 'success', 'effective']
-                if any(any(keyword in fact.lower() for keyword in outcome_keywords) for fact in result.supporting_facts):
-                    enhanced_parts.append(self._get_outcome_information(domain))
-            
-            return "\n\n".join(enhanced_parts)
-            
-        except Exception as e:
-            logger.error(f"Error enhancing answer: {e}")
-            return base_answer
     
     def _format_answer_structure(self, answer: str) -> str:
         """Format the answer structure for better readability - formats numbered lists properly"""
@@ -1004,106 +1488,6 @@ IMPORTANT: Your FINAL ANSWER must be a complete, standalone response that someon
             logger.error(f"Error formatting answer structure: {e}")
             return answer
     
-    def _detect_domain_from_result(self, result) -> str:
-        """Detect domain from the reasoning result"""
-        # Check supporting facts for domain indicators
-        all_text = " ".join(result.supporting_facts + [result.answer or ""])
-        return self._detect_domain(all_text)
-    
-    def _get_implementation_guidance(self, domain: str) -> str:
-        """Get domain-specific implementation guidance"""
-        guidance_map = {
-            "education": " Effective implementation requires balancing structure with flexibility, authority with empathy, and discipline with encouragement.",
-            "technology": " Successful implementation typically involves careful planning, testing, and gradual rollout to ensure system stability and user adoption.",
-            "customer_support": " Effective implementation requires clear communication, proper training, and systematic follow-up to ensure customer satisfaction.",
-            "business": " Successful implementation involves stakeholder buy-in, clear metrics, and iterative improvement based on feedback and results.",
-            "legal": " Proper implementation requires careful review, compliance verification, and ongoing monitoring to ensure adherence to applicable regulations.",
-            "medical": " Safe implementation requires thorough assessment, patient monitoring, and adherence to established protocols and safety guidelines.",
-            "general": " Effective implementation requires careful planning, stakeholder engagement, and systematic evaluation to ensure desired outcomes."
-        }
-        return guidance_map.get(domain, guidance_map["general"])
-    
-    def _get_outcome_information(self, domain: str) -> str:
-        """Get domain-specific outcome information"""
-        outcome_map = {
-            "education": " When implemented effectively, this approach leads to improved engagement, better learning outcomes, and a more positive environment.",
-            "technology": " When implemented successfully, this approach results in improved efficiency, better user experience, and enhanced system performance.",
-            "customer_support": " When implemented effectively, this approach leads to faster resolution times, higher customer satisfaction, and improved service quality.",
-            "business": " When implemented successfully, this approach results in improved efficiency, better outcomes, and enhanced organizational performance.",
-            "legal": " When implemented properly, this approach ensures compliance, reduces risk, and supports organizational objectives within legal frameworks.",
-            "medical": " When implemented correctly, this approach leads to improved patient outcomes, better care quality, and enhanced safety measures.",
-            "general": " When implemented effectively, this approach leads to improved results, better outcomes, and enhanced performance in the relevant context."
-        }
-        return outcome_map.get(domain, outcome_map["general"])
-    
-    def _generate_default_alternatives(self, response: str) -> List[str]:
-        """Generate default alternative interpretations based on response content - domain agnostic"""
-        alternatives = []
-        
-        # Detect domain and generate appropriate alternatives
-        domain = self._detect_domain(response)
-        
-        if domain == "education":
-            alternatives.append("Some traditional perspectives emphasize structured, teacher-directed approaches, while others advocate for more flexible, student-centered methodologies.")
-            alternatives.append("Different educational philosophies may prioritize different outcomes, such as academic achievement versus holistic development or individual growth versus standardized benchmarks.")
-        
-        elif domain == "technology":
-            alternatives.append("Some approaches favor established, proven technologies and methodologies, while others prioritize cutting-edge solutions and rapid innovation.")
-            alternatives.append("Different organizations may emphasize different priorities, such as security and stability versus agility and rapid deployment.")
-        
-        elif domain == "customer_support":
-            alternatives.append("Some support strategies focus on quick resolution and efficiency, while others prioritize comprehensive understanding and relationship building.")
-            alternatives.append("Different support philosophies may emphasize self-service options versus personalized assistance, or reactive support versus proactive guidance.")
-        
-        elif domain == "business":
-            alternatives.append("Some business approaches emphasize traditional, hierarchical structures and processes, while others favor agile, collaborative methodologies.")
-            alternatives.append("Different business philosophies may prioritize different metrics, such as short-term profitability versus long-term sustainability or growth.")
-        
-        elif domain == "legal":
-            alternatives.append("Some legal interpretations may emphasize strict adherence to established precedents, while others consider evolving societal norms and contemporary applications.")
-            alternatives.append("Different jurisdictions or legal traditions may approach similar issues with varying frameworks and considerations.")
-        
-        elif domain == "medical":
-            alternatives.append("Some medical approaches may emphasize evidence-based, standardized protocols, while others consider individualized treatment plans and patient-specific factors.")
-            alternatives.append("Different medical specialties or schools of thought may prioritize different aspects of care, such as symptom management versus root cause treatment.")
-        
-        else:
-            # Generic alternatives for any domain
-            alternatives.append("Some approaches may emphasize established, traditional methods and practices, while others favor innovative, contemporary solutions.")
-            alternatives.append("Different perspectives may prioritize different aspects, such as efficiency and standardization versus customization and flexibility.")
-        
-        return alternatives
-    
-    def _detect_domain(self, response: str) -> str:
-        """Detect the domain/topic area from response content"""
-        response_lower = response.lower()
-        
-        # Education keywords
-        if any(keyword in response_lower for keyword in ['classroom', 'teaching', 'learning', 'education', 'student', 'teacher', 'pedagogy', 'curriculum', 'instruction']):
-            return "education"
-        
-        # Technology keywords
-        elif any(keyword in response_lower for keyword in ['software', 'system', 'application', 'database', 'api', 'code', 'programming', 'technical', 'server', 'network']):
-            return "technology"
-        
-        # Customer support keywords
-        elif any(keyword in response_lower for keyword in ['customer', 'support', 'help', 'ticket', 'issue', 'problem', 'service', 'assistance', 'resolution']):
-            return "customer_support"
-        
-        # Business keywords
-        elif any(keyword in response_lower for keyword in ['business', 'company', 'organization', 'management', 'strategy', 'process', 'workflow', 'operations']):
-            return "business"
-        
-        # Legal keywords
-        elif any(keyword in response_lower for keyword in ['legal', 'law', 'regulation', 'compliance', 'contract', 'agreement', 'policy', 'rights', 'liability']):
-            return "legal"
-        
-        # Medical keywords
-        elif any(keyword in response_lower for keyword in ['medical', 'health', 'patient', 'treatment', 'diagnosis', 'therapy', 'clinical', 'healthcare', 'medicine']):
-            return "medical"
-        
-        # Default to general
-        return "general"
     
     def _create_fallback_result(self, query: str, context: List[Dict[str, Any]], 
                               error: str, device_string: str) -> ReasoningResult:

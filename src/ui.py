@@ -30,6 +30,14 @@ from config import config_manager, EMBED_MODELS, INDEX_TYPES, DEFAULTS, IndexCon
 from enterprise_logging import enterprise_logger, log_info, log_warning, log_error, log_operation
 from index_manager import IndexManager
 
+# Try to import markdown library, fallback to basic if not available
+MARKDOWN_WARNING_SHOWN = False
+try:
+    import markdown
+    MARKDOWN_AVAILABLE = True
+except ImportError:
+    MARKDOWN_AVAILABLE = False
+
 # Import thread classes from original app
 # from app_qt import AskThread  # Using new reasoning engine instead
 
@@ -1471,6 +1479,33 @@ class EnterpriseApp(QWidget):
         test_btn.clicked.connect(lambda: self._test_ollama_connection(url_edit.text()))
         layout.addRow("", test_btn)
         
+        # Reasoning Settings Section
+        # Add spacing with an empty label
+        spacing_label = QLabel("")
+        spacing_label.setMinimumHeight(10)
+        layout.addRow(spacing_label)
+        
+        reasoning_label = QLabel("<b>Reasoning Settings</b>")
+        layout.addRow("", reasoning_label)
+        
+        # Answer Length setting
+        answer_length_combo = QComboBox()
+        answer_length_combo.addItem("Short (300-400 words)", "short")
+        answer_length_combo.addItem("Medium (500-700 words)", "medium")
+        answer_length_combo.addItem("Long (800-1000+ words)", "long")
+        
+        # Load current setting
+        try:
+            current_length = config_manager.config.reasoning.answer_length
+            for i in range(answer_length_combo.count()):
+                if answer_length_combo.itemData(i) == current_length:
+                    answer_length_combo.setCurrentIndex(i)
+                    break
+        except (AttributeError, Exception):
+            pass  # Use default selection
+        
+        layout.addRow("Answer Length:", answer_length_combo)
+        
         # Buttons
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(dialog.accept)
@@ -1489,6 +1524,13 @@ class EnterpriseApp(QWidget):
                 QMessageBox.warning(self, "Missing configuration", "Please enter both base URL and model name.")
                 self.cbLLM.setCurrentIndex(0)
                 return
+            
+            # Save answer length setting
+            answer_length = answer_length_combo.currentData()
+            if answer_length:
+                config_manager.config.reasoning.answer_length = answer_length
+                config_manager.save_config()
+                log_info(f"Answer length setting saved: {answer_length}")
             
             # Set environment variables
             os.environ["OLLAMA_BASE_URL"] = base_url
@@ -1834,19 +1876,153 @@ class EnterpriseApp(QWidget):
             log_error("LLM Config Save Failed", e)
 
     def _render_markdown_basic(self, text: str) -> str:
-        """Minimal markdown-to-HTML renderer for bold/inline-code. Safe for our pre-wrap blocks.
-        Converts **bold**, __bold__, and `code` while leaving other text untouched.
+        """Render markdown to HTML using Python markdown library for better formatting.
+        Falls back to basic rendering if markdown library is not available.
         """
+        global MARKDOWN_WARNING_SHOWN
+        if not MARKDOWN_AVAILABLE:
+            # Show warning once
+            if not MARKDOWN_WARNING_SHOWN:
+                log_warning("Python markdown library not found. Install with: pip install markdown")
+                MARKDOWN_WARNING_SHOWN = True
+            # Fallback to basic text rendering
+            return self._render_markdown_fallback(text)
+        
+        try:
+            import re
+            # Pre-process text to prevent false list detection
+            # Markdown automatically converts lines starting with "number. " into lists
+            # We'll escape ALL such patterns unless they're clearly part of a sequential list
+            lines = text.split('\n')
+            processed_lines = []
+            
+            for i, line in enumerate(lines):
+                stripped = line.strip()
+                # Check if line starts with a number followed by period and space
+                list_match = re.match(r'^(\d+)\.\s+(.+)$', stripped)
+                
+                if list_match:
+                    current_num = int(list_match.group(1))
+                    # Check if this is part of a sequential list by checking adjacent lines
+                    is_sequential = False
+                    
+                    # Check previous line
+                    if i > 0:
+                        prev_match = re.match(r'^(\d+)\.\s+(.+)$', lines[i-1].strip())
+                        if prev_match:
+                            prev_num = int(prev_match.group(1))
+                            if current_num == prev_num + 1:
+                                is_sequential = True
+                    
+                    # Check next line
+                    if not is_sequential and i < len(lines) - 1:
+                        next_match = re.match(r'^(\d+)\.\s+(.+)$', lines[i+1].strip())
+                        if next_match:
+                            next_num = int(next_match.group(1))
+                            if next_num == current_num + 1:
+                                is_sequential = True
+                    
+                    # Only allow as list if it's clearly sequential
+                    # Otherwise, escape the period to prevent markdown list conversion
+                    if is_sequential:
+                        processed_lines.append(line)
+                    else:
+                        # Escape the period: "1. text" -> "1\. text" (markdown won't treat as list)
+                        # Preserve any leading whitespace
+                        leading_ws = line[:len(line) - len(line.lstrip())]
+                        content = line.lstrip()
+                        escaped = re.sub(r'^(\d+)\.\s+', r'\1\\. ', content)
+                        processed_lines.append(leading_ws + escaped)
+                else:
+                    processed_lines.append(line)
+            
+            processed_text = '\n'.join(processed_lines)
+            
+            # Configure markdown extensions - removed 'nl2br' to prevent unwanted conversions
+            # Only use extensions that don't auto-detect lists
+            extensions = [
+                'extra',           # Tables, fenced code blocks, etc.
+                'codehilite',      # Syntax highlighting for code blocks
+                'fenced_code',     # Fenced code blocks
+                'tables',          # Tables support
+            ]
+            
+            # Convert markdown to HTML
+            html = markdown.markdown(
+                processed_text,
+                extensions=extensions,
+                extension_configs={
+                    'codehilite': {
+                        'css_class': 'highlight',
+                        'use_pygments': False,  # Disable pygments for simpler styling
+                    }
+                }
+            )
+            
+            # Unescape the periods we escaped earlier
+            html = html.replace('\\.', '.')
+            
+            # Add custom styling to preserve theme colors and improve readability
+            # Style headers
+            html = html.replace('<h1>', '<h1 style="font-size: 24px; font-weight: 600; margin-top: 20px; margin-bottom: 12px; color: inherit;">')
+            html = html.replace('<h2>', '<h2 style="font-size: 20px; font-weight: 600; margin-top: 16px; margin-bottom: 8px; color: inherit;">')
+            html = html.replace('<h3>', '<h3 style="font-size: 18px; font-weight: 600; margin-top: 12px; margin-bottom: 6px; color: inherit;">')
+            html = html.replace('<h4>', '<h4 style="font-size: 16px; font-weight: 600; margin-top: 10px; margin-bottom: 4px; color: inherit;">')
+            
+            # Style lists
+            html = html.replace('<ul>', '<ul style="margin: 8px 0; padding-left: 24px;">')
+            html = html.replace('<ol>', '<ol style="margin: 8px 0; padding-left: 24px;">')
+            html = html.replace('<li>', '<li style="margin: 4px 0;">')
+            
+            # Style code blocks
+            html = html.replace('<pre>', '<pre style="background-color: rgba(128, 128, 128, 0.1); padding: 8px; border-radius: 4px; overflow-x: auto; margin: 8px 0;">')
+            html = html.replace('<code>', '<code style="background-color: rgba(128, 128, 128, 0.2); padding: 2px 4px; border-radius: 3px; font-family: monospace;">')
+            
+            # Style tables
+            html = html.replace('<table>', '<table style="border-collapse: collapse; margin: 12px 0; width: 100%;">')
+            html = html.replace('<th>', '<th style="border: 1px solid rgba(128, 128, 128, 0.3); padding: 8px; text-align: left; background-color: rgba(128, 128, 128, 0.1);">')
+            html = html.replace('<td>', '<td style="border: 1px solid rgba(128, 128, 128, 0.3); padding: 8px;">')
+            
+            # Style paragraphs
+            html = html.replace('<p>', '<p style="margin: 8px 0; line-height: 1.5;">')
+            
+            # Style blockquotes
+            html = html.replace('<blockquote>', '<blockquote style="border-left: 4px solid rgba(128, 128, 128, 0.3); margin: 8px 0; padding-left: 16px; color: inherit; opacity: 0.9;">')
+            
+            return html
+            
+        except Exception as e:
+            log_warning(f"Error rendering markdown with library: {e}")
+            # Fallback to basic rendering on error
+            return self._render_markdown_fallback(text)
+    
+    def _render_markdown_fallback(self, text: str) -> str:
+        """Fallback markdown renderer if Python markdown library is not available."""
         try:
             import re
             html = text
-            # Inline code first to avoid interfering with bold markers inside code
-            html = re.sub(r"`([^`]+)`", r"<code>\1</code>", html)
-            # Bold variants
+            
+            # Basic bold and italic
             html = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", html)
             html = re.sub(r"__(.+?)__", r"<b>\1</b>", html)
+            html = re.sub(r"\*(.+?)\*", r"<i>\1</i>", html)
+            html = re.sub(r"_(.+?)_", r"<i>\1</i>", html)
+            
+            # Inline code
+            html = re.sub(r"`([^`]+)`", r'<code style="background-color: rgba(128, 128, 128, 0.2); padding: 2px 4px; border-radius: 3px; font-family: monospace;">\1</code>', html)
+            
+            # Headers
+            html = re.sub(r'^###\s+(.+?)$', r'<h3 style="font-size: 18px; font-weight: 600; margin-top: 12px; margin-bottom: 6px;">\1</h3>', html, flags=re.MULTILINE)
+            html = re.sub(r'^##\s+(.+?)$', r'<h2 style="font-size: 20px; font-weight: 600; margin-top: 16px; margin-bottom: 8px;">\1</h2>', html, flags=re.MULTILINE)
+            html = re.sub(r'^#\s+(.+?)$', r'<h1 style="font-size: 24px; font-weight: 600; margin-top: 20px; margin-bottom: 12px;">\1</h1>', html, flags=re.MULTILINE)
+            
+            # Convert double newlines to paragraphs
+            paragraphs = html.split('\n\n')
+            html = '\n'.join([f'<p style="margin: 8px 0;">{p.strip()}</p>' if p.strip() else '' for p in paragraphs])
+            
             return html
-        except Exception:
+        except Exception as e:
+            log_warning(f"Error in fallback markdown renderer: {e}")
             return text
     
     def _check_and_prompt_llm_setup(self):
@@ -1929,7 +2105,7 @@ class EnterpriseApp(QWidget):
             # Initial Ollama connectivity probe if selected - defer to background
             if saved_backend == "ollama":
                 QTimer.singleShot(500, lambda: self.update_ollama_connection_status())
-
+            
         except Exception as e:
             log_error("LLM Config Load Failed", e)
             # Re-enable signals if there was an error
@@ -1999,8 +2175,45 @@ class EnterpriseApp(QWidget):
     def on_answer_ready(self, result: ReasoningResult):
         """Handle answer ready with enhanced reasoning display"""
         try:
+            # Debug: Log what we're receiving
+            log_info(f"=== DEBUG: on_answer_ready called ===")
+            log_info(f"Number of source citations: {len(result.source_citations)}")
+            
+            # Check if answer already has Sources
+            has_sources = "Sources:" in result.answer or "sources:" in result.answer.lower()
+            log_info(f"Answer already contains Sources: {has_sources}")
+            if has_sources:
+                # Find where Sources starts
+                sources_pos = result.answer.lower().find("sources:")
+                if sources_pos >= 0:
+                    log_info(f"Sources found at position {sources_pos}")
+                    sources_section = result.answer[sources_pos:sources_pos+200]  # First 200 chars
+                    log_info(f"Sources section preview: {sources_section}")
+            
+            if result.source_citations:
+                pages_list = []
+                for i, cit in enumerate(result.source_citations[:10]):  # Log first 10
+                    if hasattr(cit, 'file'):
+                        file_name = cit.file
+                        page = cit.page
+                        log_info(f"Citation {i}: file={file_name}, page={page}")
+                    else:
+                        file_name = cit.get('file', 'Unknown')
+                        page = cit.get('page', '?')
+                        log_info(f"Citation {i}: file={file_name}, page={page}")
+                    if page is not None:
+                        pages_list.append(page)
+                log_info(f"All pages found in citations: {sorted(set(pages_list))}")
+            
             # Format answer with source citations like the original project
             formatted_answer = self._format_answer_with_citations(result.answer, result.source_citations)
+            
+            # Debug: Check final formatted answer
+            log_info(f"Final formatted answer length: {len(formatted_answer)}")
+            if "Sources:" in formatted_answer:
+                sources_start = formatted_answer.lower().find("sources:")
+                sources_preview = formatted_answer[sources_start:sources_start+300]
+                log_info(f"Final Sources section preview: {sources_preview}")
             
             # Display formatted answer
             self.out.setHtml(f"<b>Answer:</b><br><div style='white-space:pre-wrap'>{formatted_answer}</div>")
@@ -2033,6 +2246,58 @@ class EnterpriseApp(QWidget):
         if not source_citations:
             return answer
         
+        # Strip any existing Sources section from the answer to avoid duplicates
+        # Look for Sources: section (case-insensitive) in both plain text and HTML format
+        import re
+        
+        # DEBUG: Log what we're receiving
+        log_info(f"DEBUG: Formatting answer with {len(source_citations)} citations")
+        pages_found = []
+        for cit in source_citations:
+            if hasattr(cit, 'page'):
+                pages_found.append(cit.page)
+            else:
+                pages_found.append(cit.get('page'))
+        log_info(f"DEBUG: Pages found in citations: {pages_found}")
+        
+        # SIMPLE AND ROBUST: Find "Sources:" (case-insensitive) and truncate everything from there
+        # This is the most reliable way to remove any Sources section
+        answer_lower = answer.lower()
+        sources_pos = answer_lower.find("sources:")
+        
+        if sources_pos >= 0:
+            log_info(f"DEBUG: Found Sources at position {sources_pos}, truncating answer")
+            # Truncate at the position where "Sources:" starts
+            # Look backwards a bit to catch any newlines or HTML before "Sources:"
+            # Find the last newline before "Sources:" to keep formatting clean
+            truncate_pos = sources_pos
+            # Go back to find the start of the Sources section (could be after \n\n or <br>)
+            for i in range(sources_pos - 1, max(0, sources_pos - 20), -1):
+                if answer[i] in ['\n', '\r']:
+                    # Found a newline, check if there's another one before it (paragraph break)
+                    if i > 0 and answer[i-1] in ['\n', '\r']:
+                        truncate_pos = i - 1
+                        break
+                    truncate_pos = i
+                    break
+            
+            answer_clean = answer[:truncate_pos].strip()
+            log_info(f"DEBUG: Answer truncated from {len(answer)} to {len(answer_clean)} chars")
+        else:
+            answer_clean = answer.strip()
+            log_info(f"DEBUG: No Sources found in answer, using as-is")
+        
+        # Final cleanup: remove any trailing HTML tags, <br>, or whitespace
+        answer_clean = re.sub(r'<[^>]*>\s*$', '', answer_clean)  # Remove trailing HTML tags
+        answer_clean = re.sub(r'<br>\s*$', '', answer_clean, flags=re.IGNORECASE)  # Remove trailing <br>
+        answer_clean = re.sub(r'\s+$', '', answer_clean)  # Remove trailing whitespace
+        answer_clean = answer_clean.strip()
+        
+        # Safety check: if we stripped everything, fall back to original
+        if not answer_clean or len(answer_clean) < 10:
+            log_info(f"DEBUG: Warning: Answer too short after stripping, using original")
+            answer_clean = answer
+        
         # Detect dark or light mode for colors
         app = QApplication.instance()
         is_dark = False
@@ -2052,9 +2317,11 @@ class EnterpriseApp(QWidget):
             filename_color = "#2c3e50"  # dark slate
             link_color = "#007acc"      # classic blue link
 
-        # Remove duplicate sources based on file path
-        unique_sources = {}
-        for citation in source_citations:
+        # Group citations by file path, collecting all pages
+        file_sources = {}
+        log_info(f"DEBUG: Processing {len(source_citations)} citations")
+        
+        for idx, citation in enumerate(source_citations):
             # Handle both dict and SourceCitation object
             if hasattr(citation, 'file'):
                 file_path = citation.file
@@ -2065,17 +2332,44 @@ class EnterpriseApp(QWidget):
                 page = citation.get("page", "?")
                 relevance = citation.get("relevance", 0.0)
             
-            # Use file path as key to avoid duplicates
-            if file_path not in unique_sources or relevance > unique_sources[file_path]['relevance']:
-                unique_sources[file_path] = {
+            log_info(f"DEBUG: Citation {idx}: file={file_path}, page={page}, relevance={relevance}")
+            
+            # Initialize file entry if not exists
+            if file_path not in file_sources:
+                file_sources[file_path] = {
                     'file_path': file_path,
-                    'page': page,
-                    'relevance': relevance
+                    'pages': set(),  # Use set to avoid duplicate pages
+                    'max_relevance': relevance
                 }
+                log_info(f"DEBUG: Initialized file_sources for {file_path}")
+            
+            # Add page to the set (handle None and non-numeric pages)
+            if page is not None and page != "?" and page != "N/A":
+                try:
+                    # Convert to int for proper sorting
+                    page_num = int(page)
+                    file_sources[file_path]['pages'].add(page_num)
+                    log_info(f"DEBUG: Added page {page_num} to {file_path}. Current pages: {sorted(file_sources[file_path]['pages'])}")
+                except (ValueError, TypeError) as e:
+                    # If page is not numeric, log and skip (don't add as string)
+                    log_info(f"DEBUG: Skipping non-numeric page '{page}' for file {file_path}: {e}")
+                    # Don't add non-numeric pages to avoid confusion
+                    pass
+            else:
+                log_info(f"DEBUG: Skipping page '{page}' for file {file_path} (None or invalid)")
+            
+            # Track maximum relevance for this file
+            if relevance > file_sources[file_path]['max_relevance']:
+                file_sources[file_path]['max_relevance'] = relevance
+        
+        # Log final file_sources state
+        log_info(f"DEBUG: Final file_sources: {len(file_sources)} files")
+        for file_path, info in file_sources.items():
+            log_info(f"DEBUG: File {file_path} has {len(info['pages'])} pages: {sorted(info['pages'])}")
         
         # Create clean source citations section
         sources_html = []
-        for i, (file_path, source_info) in enumerate(unique_sources.items(), 1):
+        for i, (file_path, source_info) in enumerate(file_sources.items(), 1):
             # Extract just the filename
             import os
             file_name = os.path.basename(file_path) if file_path != "Unknown" else "Unknown"
@@ -2093,26 +2387,82 @@ class EnterpriseApp(QWidget):
             else:
                 open_link = "<span style='color: #666;'>Open</span>"
             
-            # Convert to 1-based page numbering for display if numeric
-            try:
-                display_page = int(source_info['page']) + 1
-            except Exception:
-                display_page = source_info['page']
+            # Get all pages and sort them
+            pages = source_info['pages']
+            log_info(f"DEBUG: File {file_name} has pages set: {pages}")
+            if not pages:
+                # If no pages, show as "?"
+                pages_display = "?"
+            else:
+                # Separate numeric and non-numeric pages
+                numeric_pages = []
+                non_numeric_pages = []
+                for p in pages:
+                    if isinstance(p, int):
+                        numeric_pages.append(p)
+                    else:
+                        non_numeric_pages.append(str(p))
+                
+                log_info(f"DEBUG: File {file_name} numeric_pages: {numeric_pages}")
+                
+                # Determine if pages are 0-based or 1-based
+                # If minimum page is 0, assume 0-based and convert to 1-based
+                # Otherwise, assume already 1-based and use as-is
+                if numeric_pages:
+                    min_page = min(numeric_pages)
+                    is_zero_based = (min_page == 0)
+                    
+                    # Sort numeric pages
+                    numeric_pages.sort()
+                    
+                    log_info(f"DEBUG: File {file_name} sorted pages: {numeric_pages}, is_zero_based: {is_zero_based}")
+                    
+                    # Convert to 1-based only if 0-based
+                    if is_zero_based:
+                        display_numeric = [str(p + 1) for p in numeric_pages]
+                    else:
+                        display_numeric = [str(p) for p in numeric_pages]
+                    
+                    log_info(f"DEBUG: File {file_name} display_numeric: {display_numeric}")
+                else:
+                    display_numeric = []
+                
+                # Combine numeric and non-numeric, removing duplicates
+                all_display_pages = display_numeric + non_numeric_pages
+                
+                log_info(f"DEBUG: File {file_name} all_display_pages: {all_display_pages}")
+                
+                # Format pages: "pages 4, 13, 21" or "page 4" for single page
+                if len(all_display_pages) == 1:
+                    pages_display = f"page {all_display_pages[0]}"
+                else:
+                    pages_display = f"pages {', '.join(all_display_pages)}"
+                
+                log_info(f"DEBUG: File {file_name} final pages_display: {pages_display}")
 
-            # Clean format for customer support: [1] filename.pdf • page 12 • Open
+            # Clean format: [1] filename.pdf • pages 4, 13, 21 • Open
             source_text = (
                 f"[{i}] <span style='font-weight: 600; color: {filename_color};'>{file_name}</span> "
-                f"• page {display_page} • {open_link}"
+                f"• {pages_display} • {open_link}"
             )
             sources_html.append(source_text)
         
-        # Convert basic markdown in the answer portion only
-        answer_html = self._render_markdown_basic(answer)
+        # Convert basic markdown in the answer portion only (use cleaned answer without Sources)
+        answer_html = self._render_markdown_basic(answer_clean)
+        
+        # DEBUG: Log what we're about to display
+        log_info(f"DEBUG: Generated {len(sources_html)} source entries")
+        log_info(f"DEBUG: Sources HTML: {sources_html}")
+        
         # Combine answer with beautifully formatted sources
+        # IMPORTANT: Always add our Sources, never rely on Sources from the answer text
         formatted_answer = (
             f"{answer_html}\n\n<span style='color: {label_color}; font-size: 14px; font-weight: 600;'>Sources:</span><br>"
             + "<br>".join(sources_html)
         )
+        
+        # DEBUG: Log the final formatted answer length
+        log_info(f"DEBUG: Final formatted answer length: {len(formatted_answer)}")
         
         return formatted_answer
     
@@ -2181,8 +2531,11 @@ class EnterpriseApp(QWidget):
                 # Auto-scroll to bottom for final result
                 self.json_out.verticalScrollBar().setValue(self.json_out.verticalScrollBar().maximum())
                 
-                # Show final answer
+                # Show final answer - USE FORMATTED ANSWER WITH ALL PAGES
                 if result.answer:
+                    # Use the same formatting function as regular flow to ensure all pages are shown
+                    formatted_answer = self._format_answer_with_citations(result.answer, result.source_citations)
+                    
                     # Detect dark or light mode based on palette (simple heuristic)
                     app = QApplication.instance()
                     is_dark = False
@@ -2204,56 +2557,11 @@ class EnterpriseApp(QWidget):
 
                     font_size = "18px"
 
-                    # Ensure Sources section uses theme-aware colors and 1-based pages
-                    display_answer = result.answer
-                    try:
-                        import re
-                        idx = display_answer.lower().rfind("sources:")
-                        if idx != -1:
-                            head = display_answer[:idx]
-                            tail = display_answer[idx:]
-                            # Color remap within Sources block
-                            label_color = "#93C5FD" if is_dark else "#1F3A8A"
-                            filename_color = "#FFFFFF" if is_dark else "#2c3e50"
-                            link_color = "#60A5FA" if is_dark else "#007acc"
-                            # Replace the label element (often bold tag with fixed color)
-                            tail = re.sub(
-                                r"<b[^>]*color:\s*#34495e[^>]*>Sources:</b>",
-                                f"<span style='color: {label_color}; font-size: 14px; font-weight: 600;'>Sources:</span>",
-                                tail,
-                                flags=re.IGNORECASE,
-                            )
-                            # Filename color
-                            tail = re.sub(
-                                r"<span[^>]*font-weight:\s*(bold|600)[^>]*color:\s*#2c3e50[^>]*>",
-                                f"<span style='font-weight: 600; color: {filename_color};'>",
-                                tail,
-                                flags=re.IGNORECASE,
-                            )
-                            # Link color
-                            tail = re.sub(
-                                r"style='color:\s*#007acc;\s*text-decoration:\s*none;'",
-                                f"style='color: {link_color}; text-decoration: none;'",
-                                tail,
-                                flags=re.IGNORECASE,
-                            )
-                            tail = re.sub(
-                                r"(page)\s+(\d+)\b",
-                                lambda m: f"{m.group(1)} {int(m.group(2)) + 1}",
-                                tail,
-                                flags=re.IGNORECASE,
-                            )
-                            # Convert markdown in head (answer) only
-                            head_html = self._render_markdown_basic(head)
-                            display_answer = head_html + tail
-                    except Exception:
-                        pass
-
                     self.out.setHtml(
                         f"<div style='white-space:pre-wrap; color:{answer_color}; font-weight: normal; font-size:{font_size};"
                         f" padding:12px 14px;"
                         f" display:block; width:100%; box-sizing:border-box;'>"
-                        f"{display_answer}"
+                        f"{formatted_answer}"
                         f"</div>"
                     )
                     # Auto-scroll to bottom for final answer

@@ -46,7 +46,14 @@ class DocumentProcessor:
                 return None
             
             # Combine pages into full text
-            full_text = "\n\n".join(pages)
+            # Handle both formats: tuples (text, page_num) or strings (backward compatibility)
+            if pages and isinstance(pages[0], tuple):
+                # Extract text from tuples
+                page_texts = [text for text, _ in pages]
+                full_text = "\n\n".join(page_texts)
+            else:
+                # Backward compatibility: treat as strings
+                full_text = "\n\n".join(pages)
             
             # Generate document hash based on path and modification time
             doc_hash = _hash(f"{file_path}|{int(file_path.stat().st_mtime)}")

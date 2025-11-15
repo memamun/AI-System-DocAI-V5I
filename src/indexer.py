@@ -13,6 +13,7 @@ from sentence_transformers import SentenceTransformer
 
 from loaders import iter_files, load_file
 from config import IndexConfig
+from chunking import ContextualChunker, smart_chunk_text
 
 PERSIST_EVERY = 2000
 BATCH_SIZE = int(os.getenv("RAG_EMB_BATCH", "8"))
@@ -20,7 +21,7 @@ BATCH_SIZE = int(os.getenv("RAG_EMB_BATCH", "8"))
 def _hash(s: str) -> str:
     return hashlib.sha1(s.encode()).hexdigest()
 
-def _create_index(dim: int, index_type: str) -> faiss.Index:
+def _create_index(dim: int, index_type: str, num_vectors: int = 0) -> faiss.Index:
     """Create a FAISS index of the specified type"""
     if index_type == "flat":
         return faiss.IndexFlatIP(dim)
@@ -30,8 +31,16 @@ def _create_index(dim: int, index_type: str) -> faiss.Index:
         idx.hnsw.efSearch = 64
         return idx
     if index_type == "ivf":
+        # Adjust nlist based on the number of vectors if known
+        if num_vectors > 0:
+            nlist = min(1024, 4 * round(num_vectors**0.5))
+        else:
+            nlist = 1024
+        
+        # Ensure nlist is at least 1
+        nlist = max(1, nlist)
+
         quantizer = faiss.IndexFlatIP(dim)
-        nlist = 1024
         return faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_INNER_PRODUCT)
     raise ValueError("unknown index type")
 
@@ -55,6 +64,17 @@ class Indexer:
         self.meta_path = self.out_dir / "meta.jsonl"
         self.idx_path = self.out_dir / "index.faiss"
         self.info_path = self.out_dir / "index.json"
+        
+        # Initialize intelligent chunker
+        self.chunker = ContextualChunker(
+            chunk_size=1000,  # Increased from 800 for better context
+            overlap=200,      # Increased from 120 for more overlap
+            min_chunk_size=100
+        )
+        
+        # Buffer for IVF training
+        self._ivf_training_buffer: List[np.ndarray] = []
+        self._ivf_meta_buffer: List[dict] = []
 
     def _save_info(self):
         """Save index configuration to JSON file"""
@@ -133,24 +153,35 @@ class Indexer:
         def add_texts(texts: List[str], metas: List[dict]):
             nonlocal index, total_vecs
             if not texts: return
-            inputs = [f"passage: {t}" for t in texts]
+            inputs = texts
             for start in range(0, len(inputs), BATCH_SIZE):
                 batch_inputs = inputs[start:start+BATCH_SIZE]
                 batch_metas  = metas[start:start+BATCH_SIZE]
                 vecs = emb.encode(batch_inputs, normalize_embeddings=True, show_progress_bar=False)
                 vecs = vecs.astype("float32")
+                
                 if index is None:
-                    index = _create_index(vecs.shape[1], self.cfg.index_type)
-                    if isinstance(index, faiss.IndexIVF):
-                        train_n = min(50000, vecs.shape[0])
-                        index.train(vecs[:train_n])
-                index.add(vecs)
-                for m in batch_metas:
-                    meta_f.write(json.dumps(m, ensure_ascii=False) + "\n")
-                meta_f.flush()
-                total_vecs += vecs.shape[0]
-                self.on_status(f"Embeddings: +{vecs.shape[0]} (total={total_vecs})")
-                if total_vecs % PERSIST_EVERY == 0:
+                    # For IVF, we might need to wait for more vectors to train, so don't create it yet
+                    if self.cfg.index_type != "ivf":
+                        index = _create_index(vecs.shape[1], self.cfg.index_type)
+
+                # Special handling for IVF index training
+                if self.cfg.index_type == "ivf":
+                    if vecs.shape[0] > 0:
+                        self._ivf_training_buffer.append(vecs)
+                        self._ivf_meta_buffer.extend(batch_metas)
+                    # Don't add to index or write meta yet, buffer it
+                    continue
+
+                if vecs.shape[0] > 0:
+                    index.add(vecs)
+                    for m in batch_metas:
+                        meta_f.write(json.dumps(m, ensure_ascii=False) + "\n")
+                    meta_f.flush()
+                    total_vecs += vecs.shape[0]
+                    self.on_status(f"Embeddings: +{vecs.shape[0]} (total={total_vecs})")
+
+                if total_vecs % PERSIST_EVERY == 0 and self.cfg.index_type != "ivf":
                     faiss.write_index(index, str(self.idx_path))
             gc.collect()
 
@@ -167,36 +198,51 @@ class Indexer:
 
             chunks: List[str] = []
             metas: List[Dict] = []
-            CHUNK = 800
-            OVER  = 120
 
             # for each extracted "page" (or text block) from the loader
-            for pg, text in enumerate(pages):
-                n = len(text)
-                j = 0
-                while j < n:
-                    k = min(j + CHUNK, n)
-                    chunk = text[j:k].strip()
-                    if chunk:
-                        metas.append({
-                            "file": str(path.resolve()),
-                            "page": pg,
-                            "text": chunk,
-                            "doc_id": _hash(f"{path}|{int(path.stat().st_mtime)}"),
-                        })
-                        chunks.append(chunk)
-
-                    # ensure progress always increases
-                    if k >= n:
-                        j = n
-                    else:
-                        next_j = k - min(OVER, CHUNK // 2)
-                        j = next_j if next_j > j else k
-
-                    # periodic flush
-                    if len(chunks) >= 64:
-                        add_texts(chunks, metas)
-                        chunks, metas = [], []
+            # pages can return either strings (backward compatibility) or (text, page_number) tuples
+            for idx, item in enumerate(pages):
+                # Handle both formats: strings or tuples
+                if isinstance(item, tuple) and len(item) == 2:
+                    text, page_num = item
+                else:
+                    # Backward compatibility: treat as string with page index
+                    text = item
+                    # Use enumerate index as page number (0-based internally)
+                    page_num = idx
+                
+                # Use intelligent chunking to preserve semantic boundaries
+                chunked_passages = self.chunker.chunk(
+                    text, 
+                    page_num,
+                    metadata={
+                        "file": str(path.resolve()),
+                        "doc_id": _hash(f"{path}|{int(path.stat().st_mtime)}"),
+                    }
+                )
+                
+                # Process each intelligently chunked passage
+                for passage in chunked_passages:
+                    chunk_text = passage["text"]
+                    if chunk_text.strip():
+                        # Prepare metadata with structural information
+                        chunk_meta = {
+                            "file": passage.get("file", str(path.resolve())),
+                            "page": passage.get("page", page_num),
+                            "text": chunk_text,
+                            "doc_id": passage.get("doc_id", _hash(f"{path}|{int(path.stat().st_mtime)}")),
+                            "chunk_type": passage.get("chunk_type", "standard"),
+                            "section": passage.get("section"),
+                            "hierarchy": passage.get("hierarchy", 0),
+                        }
+                        
+                        metas.append(chunk_meta)
+                        chunks.append(chunk_text)
+                        
+                        # periodic flush
+                        if len(chunks) >= 64:
+                            add_texts(chunks, metas)
+                            chunks, metas = [], []
 
             if chunks:
                 add_texts(chunks, metas)
@@ -206,6 +252,41 @@ class Indexer:
             self.on_progress(pct)
 
         meta_f.close()
+        
+        # Finalize IVF index if used
+        if self.cfg.index_type == "ivf" and self._ivf_training_buffer:
+            self.on_status("Finalizing IVF index...")
+            # Consolidate all vectors from buffer
+            all_vecs = np.vstack(self._ivf_training_buffer)
+            self._ivf_training_buffer = [] # Clear buffer
+            dim = all_vecs.shape[1]
+            num_vectors = all_vecs.shape[0]
+
+            if num_vectors > 0:
+                index = _create_index(dim, "ivf", num_vectors=num_vectors)
+                
+                # Train the index
+                if index.nlist <= num_vectors:
+                    self.on_status(f"Training IVF index with {num_vectors} vectors and nlist={index.nlist}...")
+                    index.train(all_vecs)
+                    self.on_status("IVF training complete.")
+                else:
+                    self.on_status(f"Warning: Not enough vectors ({num_vectors}) to train IVF with nlist={index.nlist}. Using Flat index as fallback.")
+                    index = faiss.IndexFlatIP(dim)
+                
+                # Add all vectors to the now-trained index
+                index.add(all_vecs)
+                total_vecs = num_vectors
+                self.on_status(f"Added {total_vecs} vectors to the IVF index.")
+
+                # Now write the buffered metadata
+                self.on_status("Writing metadata...")
+                with open(self.meta_path, "w", encoding="utf-8") as meta_f:
+                    for m in self._ivf_meta_buffer:
+                        meta_f.write(json.dumps(m, ensure_ascii=False) + "\n")
+                self._ivf_meta_buffer = [] # Clear buffer
+                self.on_status("Metadata written.")
+
         if index is not None:
             faiss.write_index(index, str(self.idx_path))
         self._save_info()

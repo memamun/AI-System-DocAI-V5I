@@ -13,6 +13,7 @@ from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 
 from config import DEFAULTS
+from embeddings import load_embedding_model
 
 @dataclass
 class DocumentSnippet:
@@ -51,9 +52,9 @@ class Retriever:
                 self.metas.append(json.loads(line))
         info = json.loads((index_dir / "index.json").read_text(encoding="utf-8"))
         self.embed_model = info.get("embed_model", DEFAULTS["embed_model"])
-        
-        # Force CPU-only for embeddings
-        self.embed = SentenceTransformer(self.embed_model, device="cpu")
+
+        # Force CPU-only for embeddings - use the same loading logic as indexer
+        self.embed = load_embedding_model(self.embed_model)
 
         self.bm25 = None
         if DEFAULTS["bm25"]:
@@ -73,7 +74,7 @@ class Retriever:
             List of (index_id, score) tuples
         """
         # Dense retrieval (FAISS)
-        qv = self.embed.encode([f"query: {q}"], normalize_embeddings=True, show_progress_bar=False).astype("float32")
+        qv = self.embed.encode([q], normalize_embeddings=True, show_progress_bar=False).astype("float32")
         D, I = self.idx.search(qv, k)
         hits = list(zip(I[0].tolist(), D[0].tolist()))
 

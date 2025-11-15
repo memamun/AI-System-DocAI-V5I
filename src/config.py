@@ -62,13 +62,16 @@ DEFAULT_CONFIG = {
         "max_seq_length": 512,
     },
     "indexing": {
-        "chunk_size": 512,  # Reduced for memory efficiency
-        "chunk_overlap": 50,  # Reduced proportionally
+        "chunk_size": 1000,  # Increased for better context preservation
+        "chunk_overlap": 200,  # Increased for semantic continuity
         "index_type": "flat",  # More reliable than HNSW on limited memory
         "persist_every": 1000,  # More frequent saves
+        "min_chunk_size": 100,  # Minimum size to avoid fragments
+        "intelligent_chunking": True,  # Enable semantic boundary detection
+        "pdf_page_offset": 0,  # Adjust for PDF front matter (0 = use extracted pages as-is)
     },
     "retrieval": {
-        "top_k": 8,  # Reduced for memory efficiency
+        "top_k": 12,  # Increased for more comprehensive answers
         "min_similarity": 0.25,
         "use_bm25": True,
         "dense_weight": 0.6,
@@ -84,6 +87,7 @@ DEFAULT_CONFIG = {
         "use_streaming": True,
         "show_steps": True,
         "confidence_threshold": 0.5,
+        "answer_length": "short",  # "short" (300-400 words) default, "medium" (500-700 words), "long" (800-1000+ words)
     },
     "security": {
         "internal_lan_mode": True,
@@ -147,6 +151,9 @@ class IndexingConfig:
     chunk_overlap: int
     index_type: str
     persist_every: int
+    min_chunk_size: int = 100
+    intelligent_chunking: bool = True
+    pdf_page_offset: int = 0
 
 @dataclass
 class RetrievalConfig:
@@ -167,6 +174,7 @@ class ReasoningConfig:
     use_streaming: bool
     show_steps: bool
     confidence_threshold: float
+    answer_length: Literal["short", "medium", "long"] = "short"
 
 @dataclass
 class SecurityConfig:
